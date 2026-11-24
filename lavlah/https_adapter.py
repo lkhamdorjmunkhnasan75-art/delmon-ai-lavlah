@@ -113,7 +113,7 @@ def decode_envelope(raw,now,freshness_days):
         raise IngestionError("freshness_or_schema_invalid") from None
     return records,observed,hashlib.sha256(raw).hexdigest()
 
-def collect_registered(dsn,permission_id,actor,fetch=fetch_json):
+def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain=None,run_id=None):
     """Reserve a request slot durably before network I/O; recheck permission before storing."""
     from contextlib import closing
     from uuid import UUID
@@ -134,10 +134,14 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json):
                 WHERE permission_id=%s AND next_fetch_at<=clock_timestamp() RETURNING endpoint""",(pid,)).fetchone()
             if not reserved: raise IngestionError("rate_limited")
             endpoint=reserved["endpoint"]
+            if reserve_domain is not None: reserve_domain(c,endpoint)
         try:
             raw=fetch(endpoint)
             with c.transaction():
                 c.execute("SET LOCAL ROLE lavlah_ingestion")
+                if run_id is not None:
+                    active=c.execute("SELECT 1 FROM lavlah.https_scheduler_runs WHERE id=%s AND permission_id=%s AND outcome='running' AND lease_until>clock_timestamp() FOR UPDATE",(run_id,pid)).fetchone()
+                    if not active: raise IngestionError("lease_expired")
                 grant=permission(c,pid)
                 current=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled",(pid,)).fetchone()
                 if not current or current["endpoint"]!=endpoint or grant["source_url"]!=endpoint:
