@@ -39,3 +39,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/001_directory.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/001_directory.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/public_directory.sql
