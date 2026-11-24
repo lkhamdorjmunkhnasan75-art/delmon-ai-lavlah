@@ -162,3 +162,14 @@ jobs:
           LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
           LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_https_adapter.py -v
+      - name: Integrated scheduler migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/008_scheduler.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/008_scheduler.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/008_scheduler.sql
+      - name: Integrated scheduler tests (offline)
+        env:
+          LAVLAH_SCHEDULER_INTEGRATION: '1'
+          LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
+          LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
+        run: python -B -m unittest discover -s tests -p test_scheduler.py -v
