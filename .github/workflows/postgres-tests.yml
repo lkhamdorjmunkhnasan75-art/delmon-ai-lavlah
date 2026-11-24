@@ -86,15 +86,10 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
         working-directory: pwa
         run: |
-          if [ ! -f package-lock.json ]; then
-            npm install --package-lock-only --ignore-scripts --no-fund
-            echo 'LOCKFILE_BEGIN'
-            cat package-lock.json
-            echo 'LOCKFILE_END'
-          fi
           npm ci --no-fund
           npm audit --audit-level=high
           npm run build
+          git diff --exit-code -- package-lock.json
       - name: Next PWA browser integration
         env:
           LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
