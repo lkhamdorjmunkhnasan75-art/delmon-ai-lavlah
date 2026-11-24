@@ -14,7 +14,7 @@ class DirectoryIntegrationTests(unittest.TestCase):
         with closing(psycopg.connect(os.environ["LAVLAH_TEST_ADMIN_DSN"])) as c:
             with c.transaction():
                 c.execute("INSERT INTO lavlah.users(id,auth_subject,display_name) VALUES ('00000000-0000-0000-0000-000000000001','fixture','Private reviewer')")
-                c.execute("INSERT INTO lavlah.categories VALUES ('services','Services'),('trade','Trade')")
+                c.execute("INSERT INTO lavlah.categories VALUES ('services','Үйлчилгээ'),('trade','Худалдаа'),('hidden','Нууц ангилал')")
                 for n, name, category, status in [
                     (1,"Монгол Алфа","services","valid"),
                     (2,"Монгол Бета","trade","valid"),
@@ -55,6 +55,11 @@ class DirectoryIntegrationTests(unittest.TestCase):
         self.assertEqual(self.get(limit=1,offset=0),all_rows[:1])
         self.assertEqual(self.get(limit=1,offset=1),all_rows[1:2])
         self.assertEqual(self.get(limit=1,offset=2),[])
+
+    def test_category_names_only_visible(self):
+        response = self.client.get("/v1/directory/categories")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"items":["services","trade"],"names":{"services":"Үйлчилгээ","trade":"Худалдаа"}})
 
     def test_literal_query(self):
         for query in ("%", "_", "' OR 1=1 --", "Private"):
