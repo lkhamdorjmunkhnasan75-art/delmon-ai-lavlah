@@ -21,4 +21,13 @@ GRANT SELECT,UPDATE(next_fetch_at) ON lavlah.https_sources TO lavlah_ingestion;
 GRANT SELECT,INSERT ON lavlah.https_observations TO lavlah_ingestion;
 GRANT SELECT ON lavlah.https_observations TO lavlah_ingestion_reviewer;
 GRANT USAGE ON SEQUENCE lavlah.https_observations_id_seq TO lavlah_ingestion;
+CREATE TABLE lavlah.https_attempts (
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ permission_id uuid NOT NULL REFERENCES lavlah.https_sources(permission_id),
+ recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ outcome text NOT NULL CHECK(outcome IN ('success','failed'))
+);
+REVOKE ALL ON lavlah.https_attempts FROM PUBLIC,lavlah_request,lavlah_public_reader;
+GRANT INSERT,SELECT ON lavlah.https_attempts TO lavlah_ingestion;
+GRANT USAGE ON SEQUENCE lavlah.https_attempts_id_seq TO lavlah_ingestion;
 COMMIT;
