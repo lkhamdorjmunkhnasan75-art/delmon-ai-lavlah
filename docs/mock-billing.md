@@ -1,0 +1,8 @@
+# Mock billing
+Internal server-only service, not an HTTP endpoint. No bank/provider connection, real money, or credentials. A trusted authenticated caller must supply the actor, classify emergencies, determine resolution, record consent, and approve refunds; do not expose these inputs directly to public clients.
+
+Amounts are integer MNT. Personal inquiry: mock authorization 1,000, capture only on successful resolution, release on failure; emergency and valid same-case clarification free. Authorization is not a debit. Refund of captured payment is a separate full reversal. Organization owner can purchase a 300,000 MNT annual term; active terms cannot overlap; leap day maps to February 28 next year. Paid entitlements cease at exclusive expiry or refund; basic listing remains. Inquiry allowance remains TBD.
+
+All events, payment states and command receipts are in one PostgreSQL transaction. Retry the same actor/key/payload for the original receipt; a changed payload is rejected. Separate commands cannot duplicate authorization/capture/refund. Ledger rows are append-only for the dedicated billing role; database administrator remains trusted. This is an event journal, not a production double-entry accounting system. No live callback verification or reconciliation with an external provider is implemented.
+
+Apply migrations through 004 on a disposable database; provision a separate login with membership only in lavlah_mock_billing. Run integration tests through CI. Production identity binding, independent refund approval, provider sandbox callbacks and reconciliation are subsequent gates.
