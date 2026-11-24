@@ -108,3 +108,17 @@ jobs:
             curl --fail --silent http://127.0.0.1:$port/ >/dev/null
           done
           timeout 120 python -m unittest discover -s tests -p browser_pwa.py -v
+      - name: Mock billing migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/004_mock_payments.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/004_mock_payments.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/004_mock_payments.sql
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_billing_test LOGIN PASSWORD 'ci-billing-only' NOSUPERUSER NOCREATEDB NOCREATEROLE"
+          psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_mock_billing TO lavlah_billing_test"
+      - name: Transactional mock billing tests
+        env:
+          LAVLAH_BILLING_INTEGRATION: '1'
+          LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
+          LAVLAH_BILLING_DSN: postgresql://lavlah_billing_test:ci-billing-only@localhost:5432/postgres
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
+        run: python -B -m unittest discover -s tests -p test_mock_billing.py -v
