@@ -131,6 +131,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_review_test LOGIN PASSWORD 'ci-review-only' NOSUPERUSER NOCREATEDB NOCREATEROLE"
           psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_ingestion TO lavlah_ingest_test"
           psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_ingestion_reviewer TO lavlah_review_test"
+      - name: Scheduled collection migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
       - name: Authorized ingestion integration
         env:
           LAVLAH_INGESTION_INTEGRATION: '1'
@@ -139,11 +144,6 @@ jobs:
           LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
           LAVLAH_REVIEW_DSN: postgresql://lavlah_review_test:ci-review-only@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_ingestion.py -v
-      - name: Scheduled collection migration and rollback
-        run: |
-          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
-          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.down.sql
-          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
       - name: Scheduled collection integration
         env:
           LAVLAH_COLLECTION_INTEGRATION: '1'
