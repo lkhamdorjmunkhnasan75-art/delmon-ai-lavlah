@@ -22,4 +22,13 @@ REVOKE ALL ON lavlah.collection_jobs,lavlah.collection_runs FROM PUBLIC,lavlah_r
 GRANT SELECT,UPDATE(next_run,failures) ON lavlah.collection_jobs TO lavlah_ingestion;
 GRANT SELECT,INSERT ON lavlah.collection_runs TO lavlah_ingestion;
 GRANT USAGE ON SEQUENCE lavlah.collection_runs_id_seq TO lavlah_ingestion;
+-- Match only administrator-assigned organization identity; never merge by name alone.
+CREATE VIEW lavlah.collection_duplicate_groups WITH (security_barrier=true) AS
+SELECT p.organization_id,c.digest,count(DISTINCT c.permission_id) AS source_count
+FROM lavlah.ingestion_candidates c JOIN lavlah.ingestion_permissions p ON p.id=c.permission_id
+WHERE NOT p.revoked AND p.valid_until>now()
+AND c.observed_at+p.freshness_days*interval '1 day'>now()
+GROUP BY p.organization_id,c.digest HAVING count(DISTINCT c.permission_id)>1;
+REVOKE ALL ON lavlah.collection_duplicate_groups FROM PUBLIC;
+GRANT SELECT ON lavlah.collection_duplicate_groups TO lavlah_ingestion_reviewer;
 COMMIT;
