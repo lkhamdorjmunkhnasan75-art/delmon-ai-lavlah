@@ -39,3 +39,22 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/001_directory.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/001_directory.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/public_directory.sql
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-public.txt
+      - name: Provision disposable restricted API login
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_integration_login LOGIN PASSWORD 'ci-only-password' NOSUPERUSER NOCREATEDB NOCREATEROLE"
+          psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_public_reader TO lavlah_integration_login"
+      - name: HTTP to PostgreSQL integration
+        env:
+          LAVLAH_INTEGRATION: '1'
+          LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
+        run: python -B -m unittest discover -s tests -p test_public_integration.py -v
