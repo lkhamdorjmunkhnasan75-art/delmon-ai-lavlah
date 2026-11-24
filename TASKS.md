@@ -2,7 +2,7 @@
 - [x] T01 Implement pure inquiry pricing and lifecycle with integer MNT; tests for successful, failed, emergency, clarification and repeated requests.
 - [x] T02 Set up Python test CI and document local run.
 - [x] T03 Design user and organization permissions, source records and migrations.
-- [ ] T04 Build directory search API and provenance.
+- [x] T04 Build directory search API and provenance. Verified: Python and PostgreSQL CI, including 5 real database integration tests on 4e8df033.
 - [ ] T05 Build mobile Mongolian UI.
 - [ ] T06 Mock payment adapter, transactional ledger and idempotency.
 - [ ] T07 Authorized ingestion and review.
