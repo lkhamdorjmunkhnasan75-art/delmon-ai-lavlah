@@ -63,7 +63,7 @@ class Ingestion:
                     inserted=c.execute("""INSERT INTO lavlah.ingestion_candidates
                         (permission_id,submitted_by,name,category_slug,description,digest)
                         VALUES (%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT(permission_id,digest) DO NOTHING RETURNING id""",
+                        ON CONFLICT(permission_id,digest,observation_day) DO NOTHING RETURNING id""",
                         (permission_id,actor,row["name"],row["category_slug"],row["description"],digest)).fetchone()
                     results.append({"id":str(inserted["id"]) if inserted else None,"duplicate":inserted is None})
                 return results
