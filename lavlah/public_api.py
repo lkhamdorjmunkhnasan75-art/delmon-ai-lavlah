@@ -16,7 +16,7 @@ ORDER BY lower(name), organization_id
 LIMIT %s OFFSET %s
 """
 
-def search_directory(q, category, limit, offset):
+def read_public(sql, params=()):
     # Dedicated server-side login must inherit only lavlah_public_reader.
     with closing(psycopg.connect(os.environ["LAVLAH_PUBLIC_DSN"], row_factory=dict_row,
                                  connect_timeout=5)) as conn:
@@ -24,7 +24,18 @@ def search_directory(q, category, limit, offset):
             conn.execute("SET TRANSACTION READ ONLY")
             conn.execute("SET LOCAL statement_timeout = '3s'")
             conn.execute("SET LOCAL ROLE lavlah_public_reader")
-            return conn.execute(SQL, (q, category, category, limit, offset)).fetchall()
+            return conn.execute(sql, params).fetchall()
+
+def search_directory(q, category, limit, offset):
+    return read_public(SQL, (q, category, category, limit, offset))
+
+@app.get("/v1/directory/categories")
+def categories():
+    try:
+        rows = read_public("SELECT DISTINCT category_slug FROM lavlah.public_directory ORDER BY category_slug")
+    except (psycopg.Error, KeyError):
+        raise HTTPException(503, "Directory temporarily unavailable") from None
+    return {"items": [row["category_slug"] for row in rows]}
 
 @app.get("/v1/directory")
 def directory(q: str = Query("", max_length=120),
