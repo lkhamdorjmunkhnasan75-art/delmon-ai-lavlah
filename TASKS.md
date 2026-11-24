@@ -8,3 +8,5 @@
 - [ ] T07 Authorized ingestion and review.
 - [ ] T08 Pilot and security review.
 Start T01 and T02. Keep each change reviewable. Update task status only after verified tests. 
+
+Organization subscription: 300000 MNT/year; free basic listing; paid service includes catalog management, lead/RFQ intake and analytics. Do not imply unlimited AI usage. Subscription entitlement and expiry must be tested; no live billing without approval.
