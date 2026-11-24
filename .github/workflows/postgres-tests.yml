@@ -12,7 +12,7 @@ permissions:
 jobs:
   directory-migration:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:16
@@ -58,3 +58,20 @@ jobs:
           LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
           LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_public_integration.py -v
+      - name: Install browser
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Browser integration on mobile viewport
+        env:
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
+        run: |
+          python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8000 > /tmp/lavlah-ui.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; cat /tmp/lavlah-ui.log' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/ >/dev/null
+          python -m unittest discover -s tests -p browser_ui.py -v
