@@ -161,8 +161,8 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
                         (pid,actor,row["name"],row["category_slug"],row["description"],fingerprint,updated,updated,obs))
                 c.execute("INSERT INTO lavlah.https_attempts(permission_id,outcome) VALUES (%s,'success')",(pid,))
                 return {"observation_id":obs,"record_count":len(records)}
-        except Exception:
+        except Exception as exc:
             with c.transaction():
                 c.execute("SET LOCAL ROLE lavlah_ingestion")
                 c.execute("INSERT INTO lavlah.https_attempts(permission_id,outcome) VALUES (%s,'failed')",(pid,))
-            raise IngestionError("collection_failed") from None
+            raise IngestionError("timeout" if isinstance(exc,IngestionError) and str(exc)=="timeout" else "collection_failed") from None
