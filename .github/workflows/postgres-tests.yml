@@ -12,7 +12,7 @@ permissions:
 jobs:
   directory-migration:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
@@ -75,3 +75,30 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8000/ >/dev/null
           python -m unittest discover -s tests -p browser_ui.py -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build Next PWA and audit dependencies
+        working-directory: pwa
+        run: |
+          npm install --no-fund
+          npm audit --audit-level=high
+          npm run build
+      - name: Next PWA browser integration
+        env:
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
+          LAVLAH_API_ORIGIN: http://127.0.0.1:8000
+        run: |
+          python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8000 > /tmp/pwa-api.log 2>&1 &
+          api=$!
+          (cd pwa && exec npm run start -- --hostname 127.0.0.1) > /tmp/pwa-next.log 2>&1 &
+          ui=$!
+          trap 'kill "$api" "$ui" 2>/dev/null || true; cat /tmp/pwa-api.log /tmp/pwa-next.log' EXIT
+          for port in 8000 3000; do
+            for i in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:$port/ >/dev/null; then break; fi
+              sleep 1
+            done
+            curl --fail --silent http://127.0.0.1:$port/ >/dev/null
+          done
+          timeout 120 python -m unittest discover -s tests -p browser_pwa.py -v
