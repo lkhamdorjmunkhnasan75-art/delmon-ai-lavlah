@@ -1,6 +1,6 @@
 # MVP backlog
-- [ ] T01 Implement pure inquiry pricing and lifecycle with integer MNT; tests for successful, failed, emergency, clarification and repeated requests.
-- [ ] T02 Set up Python test CI and document local run.
+- [x] T01 Implement pure inquiry pricing and lifecycle with integer MNT; tests for successful, failed, emergency, clarification and repeated requests.
+- [x] T02 Set up Python test CI and document local run.
 - [ ] T03 Design user and organization permissions, source records and migrations.
 - [ ] T04 Build directory search API and provenance.
 - [ ] T05 Build mobile Mongolian UI.
