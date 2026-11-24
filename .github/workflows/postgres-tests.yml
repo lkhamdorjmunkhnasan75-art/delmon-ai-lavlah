@@ -139,3 +139,15 @@ jobs:
           LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
           LAVLAH_REVIEW_DSN: postgresql://lavlah_review_test:ci-review-only@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_ingestion.py -v
+      - name: Scheduled collection migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/006_collection.sql
+      - name: Scheduled collection integration
+        env:
+          LAVLAH_COLLECTION_INTEGRATION: '1'
+          LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
+          LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
+          LAVLAH_REVIEW_DSN: postgresql://lavlah_review_test:ci-review-only@localhost:5432/postgres
+        run: python -B -m unittest discover -s tests -p test_collection.py -v
