@@ -1,0 +1,74 @@
+"""Opt-in scheduled collector. No automatic publication or untrusted URL fetching."""
+import json
+from contextlib import closing
+from pathlib import Path
+from uuid import UUID
+import psycopg
+from psycopg.rows import dict_row
+from lavlah.ingestion import prepare, permission, IngestionError
+
+class LocalJSONAdapter:
+    """Operator-provisioned file mapping by permission UUID; never accepts remote paths."""
+    def __init__(self, root):
+        self.root=Path(root).resolve()
+    def collect(self, grant):
+        path=self.root/(str(UUID(str(grant["id"])))+".json")
+        if path.resolve().parent!=self.root or path.is_symlink():
+            raise IngestionError("Invalid feed path")
+        with path.open("rb") as f:
+            raw=f.read(512001)
+        if len(raw)>512000:
+            raise IngestionError("Feed too large")
+        records=json.loads(raw)
+        if not isinstance(records,list) or not 1<=len(records)<=100:
+            raise IngestionError("Invalid batch")
+        return records
+
+class Runner:
+    def __init__(self,dsn,adapter):
+        self.dsn,self.adapter=dsn,adapter
+    def run_due(self,limit=10):
+        if type(limit) is not int or not 1<=limit<=100:
+            raise ValueError("Invalid limit")
+        results=[]
+        for _ in range(limit):
+            with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
+                with c.transaction():
+                    c.execute("SET LOCAL ROLE lavlah_ingestion")
+                    c.execute("SET LOCAL statement_timeout='10s'")
+                    job=c.execute("""SELECT * FROM lavlah.collection_jobs
+                      WHERE enabled AND next_run<=now() ORDER BY next_run,permission_id
+                      LIMIT 1 FOR UPDATE SKIP LOCKED""").fetchone()
+                    if not job: break
+                    pid=job["permission_id"]
+                    outcome,code,count="success",None,0
+                    try:
+                        with c.transaction():
+                            grant=permission(c,pid)
+                            try: records=self.adapter.collect(grant)
+                            except Exception: raise IngestionError("adapter_error") from None
+                            if not isinstance(records,list) or not 1<=len(records)<=100:
+                                raise IngestionError("record_invalid")
+                            for record in records:
+                                row,digest=prepare(record)
+                                c.execute("""INSERT INTO lavlah.ingestion_candidates
+                                  (permission_id,submitted_by,name,category_slug,description,digest)
+                                  VALUES (%s,%s,%s,%s,%s,%s)
+                                  ON CONFLICT(permission_id,digest,observation_day) DO NOTHING""",
+                                  (pid,job["actor_id"],row["name"],row["category_slug"],row["description"],digest))
+                            count=len(records)
+                    except IngestionError as exc:
+                        code="permission_invalid" if str(exc)=="Active source permission required" else "adapter_error" if str(exc)=="adapter_error" else "record_invalid"
+                        outcome="blocked" if code=="permission_invalid" else "failed"
+                    except psycopg.Error:
+                        outcome,code="failed","database_error"
+                    failures=0 if outcome=="success" else min(job["failures"]+1,16)
+                    delay=job["interval_minutes"] if outcome in ("success","blocked") else min(job["interval_minutes"],15*2**min(failures-1,8))
+                    c.execute("UPDATE lavlah.collection_jobs SET failures=%s,next_run=now()+%s*interval '1 minute' WHERE permission_id=%s",(failures,delay,pid))
+                    c.execute("INSERT INTO lavlah.collection_runs(permission_id,outcome,record_count,error_code) VALUES (%s,%s,%s,%s)",(pid,outcome,count,code))
+                    results.append({"permission_id":str(pid),"outcome":outcome,"record_count":count,"error_code":code})
+        return results
+
+if __name__=="__main__":
+    import os
+    print(json.dumps(Runner(os.environ["LAVLAH_INGESTION_DSN"],LocalJSONAdapter(os.environ["LAVLAH_FEED_DIR"])).run_due()))
