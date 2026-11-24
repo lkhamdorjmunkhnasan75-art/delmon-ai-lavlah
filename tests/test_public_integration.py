@@ -66,7 +66,9 @@ class DirectoryIntegrationTests(unittest.TestCase):
             for table in ("users","organizations","sources","memberships","public_listings"):
                 with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     c.execute("SELECT * FROM lavlah."+table)
-            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            for privilege in ("INSERT", "UPDATE", "DELETE"):
+                self.assertFalse(c.execute("SELECT has_table_privilege(current_user, %s, %s)", ("lavlah.public_directory", privilege)).fetchone()[0])
+            with self.assertRaises((psycopg.errors.InsufficientPrivilege, psycopg.errors.ObjectNotInPrerequisiteState)):
                 c.execute("DELETE FROM lavlah.public_directory")
 
     def test_revocation_immediately_hides_listing(self):
