@@ -32,10 +32,10 @@ def search_directory(q, category, limit, offset):
 @app.get("/v1/directory/categories")
 def categories():
     try:
-        rows = read_public("SELECT DISTINCT category_slug FROM lavlah.public_directory ORDER BY category_slug")
+        rows = read_public("SELECT slug AS category_slug, name FROM lavlah.public_category_names ORDER BY slug")
     except (psycopg.Error, KeyError):
         raise HTTPException(503, "Directory temporarily unavailable") from None
-    return {"items": [row["category_slug"] for row in rows]}
+    return {"items": [row["category_slug"] for row in rows], "names": {row["category_slug"]: row["name"] for row in rows}}
 
 @app.get("/v1/directory")
 def directory(q: str = Query("", max_length=120),
