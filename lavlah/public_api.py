@@ -39,3 +39,14 @@ def directory(q: str = Query("", max_length=120),
               "source_url", "verified_at", "expires_at")
     return {"items": [{k: row[k] for k in fields} for row in rows],
             "limit": limit, "offset": offset}
+
+# Serve the initial mobile UI on the same origin as the directory API.
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+app.mount("/ui", StaticFiles(directory=WEB_DIR), name="ui")
+
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(WEB_DIR / "index.html")
