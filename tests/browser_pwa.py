@@ -49,3 +49,24 @@ class PwaBrowser(unittest.TestCase):
         self.assertEqual(response.headers["x-content-type-options"],"nosniff")
         self.assertEqual(req.get("http://127.0.0.1:3000/api/directory/private").status,404)
         self.assertEqual(self.page.evaluate("caches.keys()"),[])
+
+    def test_nonce_and_injection_blocked(self):
+        import re
+        first=self.page.request.get("http://127.0.0.1:3000/")
+        second=self.page.request.get("http://127.0.0.1:3000/")
+        a=first.headers["content-security-policy"]
+        b=second.headers["content-security-policy"]
+        self.assertNotIn("unsafe-inline",a)
+        self.assertNotIn("unsafe-eval",a)
+        self.assertIn("no-store",first.headers["cache-control"])
+        nonce=re.search(r"'nonce-([^']+)'",a).group(1)
+        self.assertNotIn(nonce,b)
+        self.assertTrue(self.page.evaluate("""() => {
+            window.__injected = false;
+            const s = document.createElement('script');
+            s.textContent = 'window.__injected = true';
+            document.body.appendChild(s);
+            return !window.__injected;
+        }"""))
+        self.search("монгол","services")
+        expect(self.page.locator("#results h2")).to_have_text("Монгол Алфа")
