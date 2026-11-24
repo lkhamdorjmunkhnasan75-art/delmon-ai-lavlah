@@ -72,3 +72,14 @@ class CollectionTests(unittest.TestCase):
         self.due()
         self.assertEqual(self.runner.run_due()[0]["outcome"],"success")
         self.assertEqual(self.sql("SELECT failures FROM lavlah.collection_jobs WHERE permission_id=%s",(self.pid,)),[(0,)])
+
+    def test_cross_source_duplicate_group(self):
+        self.runner.run_due()
+        other=uuid4()
+        self.sql("""INSERT INTO lavlah.ingestion_permissions(id,organization_id,source_url,evidence,granted_by,valid_until,freshness_days)
+        VALUES (%s,%s,'https://example.test/other','fixture',%s,now()+interval '2 days',1)""",(other,self.org,self.reviewer))
+        self.service.submit(other,self.actor,[self.record])
+        with closing(psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"])) as c:
+            self.assertEqual(c.execute("SELECT source_count FROM lavlah.collection_duplicate_groups WHERE organization_id=%s",(self.org,)).fetchall(),[(2,)])
+        self.sql("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(other,))
+        self.assertEqual(self.sql("SELECT source_count FROM lavlah.collection_duplicate_groups WHERE organization_id=%s",(self.org,)),[])
