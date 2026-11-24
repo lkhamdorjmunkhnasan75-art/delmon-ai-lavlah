@@ -112,3 +112,53 @@ def decode_envelope(raw,now,freshness_days):
     except (ValueError,TypeError,KeyError,OverflowError) as exc:
         raise IngestionError("freshness_or_schema_invalid") from None
     return records,observed,hashlib.sha256(raw).hexdigest()
+
+def collect_registered(dsn,permission_id,actor,fetch=fetch_json):
+    """Reserve a request slot durably before network I/O; recheck permission before storing."""
+    from contextlib import closing
+    from uuid import UUID
+    import psycopg
+    from psycopg.rows import dict_row
+    from lavlah.ingestion import permission
+    pid,actor=UUID(str(permission_id)),UUID(str(actor))
+    with closing(psycopg.connect(dsn,row_factory=dict_row,connect_timeout=5)) as c:
+        with c.transaction():
+            c.execute("SET LOCAL ROLE lavlah_ingestion")
+            c.execute("SET LOCAL statement_timeout='5s'")
+            grant=permission(c,pid)
+            source=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled FOR UPDATE",(pid,)).fetchone()
+            if not source or source["endpoint"]!=grant["source_url"]:
+                raise IngestionError("endpoint_not_authorized")
+            endpoint_parts(source["endpoint"])
+            reserved=c.execute("""UPDATE lavlah.https_sources SET next_fetch_at=clock_timestamp()+min_interval_seconds*interval '1 second'
+                WHERE permission_id=%s AND next_fetch_at<=clock_timestamp() RETURNING endpoint""",(pid,)).fetchone()
+            if not reserved: raise IngestionError("rate_limited")
+            endpoint=reserved["endpoint"]
+        try:
+            raw=fetch(endpoint)
+            with c.transaction():
+                c.execute("SET LOCAL ROLE lavlah_ingestion")
+                grant=permission(c,pid)
+                current=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled",(pid,)).fetchone()
+                if not current or current["endpoint"]!=endpoint or grant["source_url"]!=endpoint:
+                    raise IngestionError("endpoint_not_authorized")
+                now=c.execute("SELECT clock_timestamp() AS t").fetchone()["t"]
+                records,updated,digest=decode_envelope(raw,now,grant["freshness_days"])
+                prior=c.execute("SELECT max(source_updated_at) AS t FROM lavlah.https_observations WHERE permission_id=%s",(pid,)).fetchone()["t"]
+                if prior is not None and updated<=prior:
+                    raise IngestionError("stale_replay")
+                obs=c.execute("""INSERT INTO lavlah.https_observations(permission_id,source_updated_at,body_sha256,record_count)
+                    VALUES (%s,%s,%s,%s) RETURNING id""",(pid,updated,digest,len(records))).fetchone()["id"]
+                for record in records:
+                    row,fingerprint=prepare(record)
+                    c.execute("""INSERT INTO lavlah.ingestion_candidates(permission_id,submitted_by,name,category_slug,description,digest,observed_at,observation_day,https_observation_id)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,(timezone('UTC',%s::timestamptz)::date),%s)
+                        ON CONFLICT(permission_id,digest,observation_day) DO NOTHING""",
+                        (pid,actor,row["name"],row["category_slug"],row["description"],fingerprint,updated,updated,obs))
+                c.execute("INSERT INTO lavlah.https_attempts(permission_id,outcome) VALUES (%s,'success')",(pid,))
+                return {"observation_id":obs,"record_count":len(records)}
+        except Exception:
+            with c.transaction():
+                c.execute("SET LOCAL ROLE lavlah_ingestion")
+                c.execute("INSERT INTO lavlah.https_attempts(permission_id,outcome) VALUES (%s,'failed')",(pid,))
+            raise IngestionError("collection_failed") from None
