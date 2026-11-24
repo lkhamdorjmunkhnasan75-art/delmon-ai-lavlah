@@ -122,3 +122,20 @@ jobs:
           LAVLAH_BILLING_DSN: postgresql://lavlah_billing_test:ci-billing-only@localhost:5432/postgres
           LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_mock_billing.py -v
+      - name: Ingestion migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/005_ingestion.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/005_ingestion.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/005_ingestion.sql
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_ingest_test LOGIN PASSWORD 'ci-ingest-only' NOSUPERUSER NOCREATEDB NOCREATEROLE"
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_review_test LOGIN PASSWORD 'ci-review-only' NOSUPERUSER NOCREATEDB NOCREATEROLE"
+          psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_ingestion TO lavlah_ingest_test"
+          psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_ingestion_reviewer TO lavlah_review_test"
+      - name: Authorized ingestion integration
+        env:
+          LAVLAH_INGESTION_INTEGRATION: '1'
+          LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
+          LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
+          LAVLAH_REVIEW_DSN: postgresql://lavlah_review_test:ci-review-only@localhost:5432/postgres
+        run: python -B -m unittest discover -s tests -p test_ingestion.py -v
