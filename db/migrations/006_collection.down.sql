@@ -1,4 +1,5 @@
 BEGIN;
+DROP VIEW lavlah.collection_duplicate_groups;
 DROP TABLE lavlah.collection_runs,lavlah.collection_jobs;
 -- Refuse rollback if repeated observations exist; preserve review history.
 ALTER TABLE lavlah.ingestion_candidates ADD UNIQUE(permission_id,digest);
