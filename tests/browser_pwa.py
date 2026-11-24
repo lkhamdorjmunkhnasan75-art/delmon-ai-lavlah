@@ -49,3 +49,32 @@ class PwaBrowser(unittest.TestCase):
         self.assertEqual(response.headers["x-content-type-options"],"nosniff")
         self.assertEqual(req.get("http://127.0.0.1:3000/api/directory/private").status,404)
         self.assertEqual(self.page.evaluate("caches.keys()"),[])
+
+    def test_nonce_and_injection_blocked(self):
+        import re
+        first=self.page.request.get("http://127.0.0.1:3000/")
+        second=self.page.request.get("http://127.0.0.1:3000/")
+        a=first.headers["content-security-policy"]
+        b=second.headers["content-security-policy"]
+        self.assertNotIn("unsafe-inline",a)
+        self.assertNotIn("unsafe-eval",a)
+        self.assertIn("no-store",first.headers["cache-control"])
+        nonce=re.search(r"'nonce-([^']+)'",a).group(1)
+        self.assertNotIn(nonce,b)
+        # Use a parser-inserted script in a fresh document, not CDP evaluation
+        # as the injection mechanism. Preserve the actual response CSP.
+        context=self.browser.new_context(service_workers="block")
+        self.addCleanup(context.close)
+        page=context.new_page()
+        def inject(route):
+            original=route.fetch()
+            html=original.text().replace("</body>", "<script>window.__injected = true;</script></body>")
+            self.assertIn("<script>window.__injected = true;</script>", html)
+            route.fulfill(response=original,body=html)
+        page.route("http://127.0.0.1:3000/",inject)
+        navigation=page.goto("http://127.0.0.1:3000/")
+        self.assertIn("'nonce-",navigation.headers["content-security-policy"])
+        expect(page.locator("#category option[value=services]")).to_have_count(1)
+        self.assertFalse(page.evaluate("window.__injected === true"))
+        self.search("монгол","services")
+        expect(self.page.locator("#results h2")).to_have_text("Монгол Алфа")

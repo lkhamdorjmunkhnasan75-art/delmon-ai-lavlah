@@ -44,6 +44,9 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/002_public_directory.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/public_directory.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.sql
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -79,11 +82,14 @@ jobs:
         with:
           node-version: '24'
       - name: Build Next PWA and audit dependencies
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
         working-directory: pwa
         run: |
-          npm install --no-fund
+          npm ci --no-fund
           npm audit --audit-level=high
           npm run build
+          git diff --exit-code -- package-lock.json
       - name: Next PWA browser integration
         env:
           LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@localhost:5432/postgres
