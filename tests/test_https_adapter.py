@@ -31,6 +31,20 @@ class HTTPSUnitTests(unittest.TestCase):
             with self.assertRaises(IngestionError): fetch_json("https://example.test/feed")
             conn.return_value.request.assert_called_once()
             conn.return_value.close.assert_called_once()
+    def test_tls_pins_ip_and_authenticates_hostname(self):
+        from lavlah.https_adapter import PinnedHTTPS
+        import ssl
+        with patch("lavlah.https_adapter.socket.socket") as sock:
+            conn=PinnedHTTPS("example.test","8.8.8.8")
+            self.assertTrue(conn._context.check_hostname)
+            self.assertEqual(conn._context.verify_mode,ssl.CERT_REQUIRED)
+            with patch.object(conn._context,"wrap_socket") as wrap:
+                conn.connect()
+                sock.return_value.connect.assert_called_once_with(("8.8.8.8",443))
+                wrap.assert_called_once_with(sock.return_value,server_hostname="example.test")
+            with patch.object(conn._context,"wrap_socket",side_effect=ssl.SSLCertVerificationError("fixture")):
+                with self.assertRaises(ssl.SSLCertVerificationError): conn.connect()
+                sock.return_value.close.assert_called_once()
     def test_freshness_and_schema(self):
         now=datetime.now(timezone.utc)
         records,at,digest=decode_envelope(envelope(now),now,1)
@@ -78,3 +92,13 @@ class HTTPSDatabaseTests(unittest.TestCase):
         def never(url):
             self.fail("Network access attempted")
         with self.assertRaises(IngestionError): collect_registered(self.dsn,self.pid,self.actor,never)
+
+    def test_revocation_during_fetch_discards_data(self):
+        def fake(url):
+            self.sql("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(self.pid,))
+            return envelope(datetime.now(timezone.utc)-timedelta(seconds=1))
+        with self.assertRaisesRegex(IngestionError,"collection_failed"):
+            collect_registered(self.dsn,self.pid,self.actor,fake)
+        self.assertEqual(self.sql("SELECT id FROM lavlah.https_observations WHERE permission_id=%s",(self.pid,)),[])
+        self.assertEqual(self.sql("SELECT id FROM lavlah.ingestion_candidates WHERE permission_id=%s",(self.pid,)),[])
+        self.assertEqual(self.sql("SELECT outcome FROM lavlah.https_attempts WHERE permission_id=%s",(self.pid,)),[("failed",)])
