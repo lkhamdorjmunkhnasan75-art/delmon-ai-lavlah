@@ -7,6 +7,10 @@ from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.responses import JSONResponse
 from lavlah.pilot_security import enabled as pilot_enabled, security, event
 from fastapi.exceptions import RequestValidationError
+from lavlah.api_limits import reserve, Limited, principal_bucket
+from lavlah.synthetic_identity import validate, configured_key
+import asyncio
+from starlette.concurrency import run_in_threadpool
 from lavlah.identity_store import check_connection, checked_dsn, profile, revoke_token
 from pydantic import BaseModel, Field, ConfigDict
 from lavlah.mongolian_qa import answer as directory_answer
@@ -58,6 +62,60 @@ async def pilot_guard(request: Request, call_next):
     response=await call_next(request)
     response.headers["Cache-Control"]="no-store"
     if response.status_code>=500:event("pilot_backend_error")
+    return response
+
+# Outer guard: explicitly enabled only in isolated pilot. No forwarded identity.
+@app.middleware("http")
+async def shared_limits(request: Request, call_next):
+    path=request.url.path
+    if not path.startswith("/v1/"):
+        return await call_next(request)
+    def deny(status,code,retry=None):
+        event(code)
+        headers={"Cache-Control":"no-store"}
+        if retry is not None:headers["Retry-After"]=str(retry)
+        return JSONResponse({"detail":code},status_code=status,headers=headers)
+    if os.getenv("LAVLAH_ENV")=="production":
+        if path.startswith("/v1/pilot/"):
+            return deny(404,"pilot_disabled")
+        return deny(503,"production_disabled")
+    if os.getenv("LAVLAH_ENABLE_SHARED_LIMITS")!="1":
+        return await call_next(request)
+    if not pilot_enabled():
+        return deny(503,"limits_configuration")
+    if request.client is None or request.client.host not in ("127.0.0.1","::1","testclient"):
+        return deny(403,"untrusted_peer")
+    if any(k in request.headers for k in ("forwarded","x-forwarded-for","x-real-ip","x-forwarded-host","x-forwarded-proto")):
+        return deny(403,"forwarded_identity_denied")
+    budgets={"global":300}
+    if path=="/v1/pilot/login":
+        budgets["login"]=10
+    elif path.startswith("/v1/pilot/identity/"):
+        try:
+            auth=request.headers.get("authorization","")
+            if not auth.startswith("Bearer "):raise ValueError()
+            claims=validate(auth[7:],configured_key())
+            budgets[principal_bucket(claims["sub"])]=20
+        except ValueError:
+            budgets["invalid_identity"]=20
+    elif path.startswith("/v1/pilot/"):
+        auth=request.headers.get("authorization","")
+        key=security.authorize(auth[7:]) if auth.startswith("Bearer ") else None
+        if key:budgets["session:"+key]=20
+        else:budgets["anonymous"]=60
+    else:
+        budgets["directory"]=120
+    try:
+        async with asyncio.timeout(8):
+            await run_in_threadpool(reserve,budgets)
+            response=await call_next(request)
+    except Limited as exc:
+        return deny(429,"shared_rate_limited",exc.retry)
+    except TimeoutError:
+        return deny(504,"request_deadline")
+    except (psycopg.Error,ValueError,KeyError):
+        return deny(503,"limits_unavailable")
+    response.headers["Cache-Control"]="no-store"
     return response
 
 @app.exception_handler(RequestValidationError)
