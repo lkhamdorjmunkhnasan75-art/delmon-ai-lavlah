@@ -48,7 +48,7 @@ DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM lavlah.publication_audit) OR NOT EXISTS (SELECT 1 FROM lavlah.mock_callbacks) OR NOT EXISTS (SELECT 1 FROM lavlah.chat_usage) OR NOT EXISTS (SELECT 1 FROM lavlah.chat_feedback) THEN RAISE EXCEPTION 'missing populated audit fixtures'; END IF;
  IF has_table_privilege('lavlah_public_reader','lavlah.chat_usage','SELECT') OR has_table_privilege('lavlah_public_reader','lavlah.mock_callbacks','SELECT') OR has_table_privilege('lavlah_public_reader','lavlah.publication_audit','SELECT') THEN RAISE EXCEPTION 'private journal exposed'; END IF;
  IF has_table_privilege('lavlah_ingestion_reviewer','lavlah.publication_audit','DELETE') OR has_table_privilege('lavlah_mock_billing','lavlah.mock_callbacks','UPDATE') OR has_table_privilege('lavlah_request','lavlah.chat_usage','DELETE') THEN RAISE EXCEPTION 'journal mutation privilege'; END IF;
-END $;
+END $$;
 SQL
 echo "Backup/restore table data and selected ACL checks passed"
 echo "Populated journals, sequence values and RLS metadata restore passed"
