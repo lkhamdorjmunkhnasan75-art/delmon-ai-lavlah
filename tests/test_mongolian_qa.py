@@ -5,6 +5,7 @@ import psycopg
 from fastapi.testclient import TestClient
 from lavlah.mongolian_qa import interpret, answer
 from lavlah.public_api import app
+from tests_pilot_auth import pilot_auth
 from lavlah.pilot_fixtures import apply, RECORDS
 
 class MongolianQATests(unittest.TestCase):
@@ -43,12 +44,12 @@ class MongolianQATests(unittest.TestCase):
 
     def test_api_disabled_default(self):
         with patch.dict(os.environ,{"LAVLAH_ENABLE_PILOT_QA":"0"}), patch("lavlah.public_api.search_directory") as search:
-            with TestClient(app) as client:
+            with TestClient(app) as client, pilot_auth(client):
                 self.assertEqual(client.post("/v1/pilot/ask",json={"question":"Алтан нар"}).status_code,404)
             search.assert_not_called()
 
     def test_api_validation_and_error(self):
-        with patch.dict(os.environ,{"LAVLAH_ENABLE_PILOT_QA":"1"}), TestClient(app) as client:
+        with patch.dict(os.environ,{"LAVLAH_ENABLE_PILOT_QA":"1"}), TestClient(app) as client, pilot_auth(client):
             for body in ({"question":""},{"question":"а"*241},{"question":"а\x00"},{"question":"Алтан нар","sql":"ignored"}):
                 self.assertEqual(client.post("/v1/pilot/ask",json=body).status_code,422)
             with patch("lavlah.public_api.search_directory",side_effect=psycopg.OperationalError("private details")):
@@ -65,6 +66,9 @@ class MongolianQAIntegrationTests(unittest.TestCase):
         self.flag.start()
         self.addCleanup(self.flag.stop)
         self.client=TestClient(app)
+        auth=pilot_auth(self.client)
+        auth.__enter__()
+        self.addCleanup(auth.__exit__,None,None,None)
         self.addCleanup(self.client.close)
         self.addCleanup(apply,self.dsn,reset=True)
 
