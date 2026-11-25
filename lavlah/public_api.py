@@ -1,5 +1,7 @@
 """Read-only public directory API. No tenant identity is accepted here."""
 import os
+import logging
+from lavlah.grounded_ai import respond as grounded_answer
 from contextlib import closing
 from fastapi import FastAPI, Query, HTTPException, Response
 from pydantic import BaseModel, Field, ConfigDict
@@ -69,6 +71,21 @@ def ask_pilot(body: PilotQuestion, response: Response):
         raise HTTPException(422,"Invalid question") from None
     except (psycopg.Error,KeyError):
         raise HTTPException(503,"Directory temporarily unavailable") from None
+
+@app.post("/v1/pilot/grounded-ask")
+def grounded_ask(body: PilotQuestion, response: Response):
+    if os.environ.get("LAVLAH_ENABLE_PILOT_QA")!="1" or os.environ.get("LAVLAH_ENABLE_MOCK_AI")!="1":
+        raise HTTPException(404,"Not found")
+    response.headers["Cache-Control"]="no-store"
+    try:
+        result=grounded_answer(body.question,search_directory)
+    except ValueError:
+        raise HTTPException(422,"Invalid question") from None
+    except (psycopg.Error,KeyError):
+        raise HTTPException(503,"Directory temporarily unavailable") from None
+    # Numeric mock metrics only; never log question, source content or identifiers.
+    logging.getLogger("lavlah.mock_usage").info("mock_usage %s",result["usage"])
+    return result
 
 # Serve the initial mobile UI on the same origin as the directory API.
 from pathlib import Path
