@@ -4,6 +4,7 @@ import os
 from uuid import UUID
 from contextlib import closing
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 
 RECORDS=(
  ("ТУРШИЛТ — Алтан нар засвар","services","Зохиомол цахилгаан засварын үйлчилгээ","valid"),
@@ -19,14 +20,30 @@ def guard(c):
     if db[0]!="lavlah_pilot_test" or db[1] not in ("127.0.0.1/32","::1/128","127.0.0.1","::1"):
         raise ValueError("Dedicated loopback pilot database required")
 
+def validate_dsn(dsn):
+    options=conninfo_to_dict(dsn)
+    if options.get("dbname")!="lavlah_pilot_test" or options.get("host") not in ("127.0.0.1","::1"):
+        raise ValueError("Dedicated numeric loopback pilot DSN required")
+    if set(options)-{"dbname","host","port","user","password","sslmode"}:
+        raise ValueError("Unexpected pilot connection options")
+
 def apply(dsn,*,reset=False):
+    validate_dsn(dsn)
+    if os.environ.get("LAVLAH_PILOT_ONLY")!="1":
+        raise ValueError("Explicit pilot opt-in required")
     with closing(psycopg.connect(dsn,connect_timeout=5)) as c:
         with c.transaction():
             guard(c)
+            if c.execute("SELECT current_setting('lavlah.pilot_only', true)").fetchone()[0]!="yes":
+                raise ValueError("Pilot database marker required")
             c.execute("SELECT pg_advisory_xact_lock(8041001)")
             ids=[identifier(100+i) for i in range(len(RECORDS))]
             if c.execute("SELECT 1 FROM lavlah.organizations WHERE NOT (id=ANY(%s)) LIMIT 1",(ids,)).fetchone():
                 raise ValueError("Non-pilot organizations present")
+            if c.execute("SELECT 1 FROM lavlah.users WHERE NOT (id=ANY(%s)) LIMIT 1",([identifier(1),identifier(2)],)).fetchone():
+                raise ValueError("Non-pilot users present")
+            if c.execute("SELECT 1 FROM lavlah.sources WHERE NOT (id=ANY(%s)) OR authorization_reference<>'SYNTHETIC ONLY' LIMIT 1",([identifier(200+i) for i in range(len(RECORDS))],)).fetchone():
+                raise ValueError("Non-pilot sources present")
             c.execute("DELETE FROM lavlah.public_listings WHERE organization_id=ANY(%s)",(ids,))
             c.execute("DELETE FROM lavlah.sources WHERE organization_id=ANY(%s)",(ids,))
             c.execute("DELETE FROM lavlah.organizations WHERE id=ANY(%s)",(ids,))
