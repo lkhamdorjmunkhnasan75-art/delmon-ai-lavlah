@@ -58,6 +58,7 @@ class HTTPSUnitTests(unittest.TestCase):
 class HTTPSDatabaseTests(unittest.TestCase):
     def setUp(self):
         self.admin=os.environ["LAVLAH_TEST_ADMIN_DSN"]
+        self.sql("DELETE FROM lavlah.https_domain_slots")
         self.dsn=os.environ["LAVLAH_INGESTION_DSN"]
         self.actor,self.org,self.pid=[uuid4() for _ in range(3)]
         self.sql("INSERT INTO lavlah.users(id,auth_subject,display_name) VALUES (%s,%s,'Fixture')",(self.actor,str(self.actor)))
@@ -84,6 +85,11 @@ class HTTPSDatabaseTests(unittest.TestCase):
         self.assertEqual(len(calls),1)
         self.assertEqual(self.sql("SELECT source_updated_at FROM lavlah.https_observations WHERE permission_id=%s",(self.pid,)),[(at,)])
         self.due()
+        # The new shared throttle must also expire before exercising replay rejection.
+        with self.assertRaisesRegex(IngestionError,"rate_limited"):
+            collect_registered(self.dsn,self.pid,self.actor,fake)
+        self.assertEqual(len(calls),1)
+        self.sql("UPDATE lavlah.https_domain_slots SET next_at=clock_timestamp()-interval '1 second'")
         with self.assertRaisesRegex(IngestionError,"collection_failed"):
             collect_registered(self.dsn,self.pid,self.actor,fake)
         self.assertEqual(self.sql("SELECT outcome FROM lavlah.https_attempts WHERE permission_id=%s ORDER BY id",(self.pid,)),[("success",),("failed",)])

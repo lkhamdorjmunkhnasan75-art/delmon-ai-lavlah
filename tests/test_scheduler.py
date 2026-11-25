@@ -33,6 +33,7 @@ class DeadlineTests(unittest.TestCase):
 class SchedulerTests(unittest.TestCase):
     def setUp(self):
         self.admin=os.environ["LAVLAH_TEST_ADMIN_DSN"]
+        self.sql("DELETE FROM lavlah.https_domain_slots")
         self.dsn=os.environ["LAVLAH_INGESTION_DSN"]
         self.actor,self.org=uuid4(),uuid4()
         self.host=str(uuid4())+".example.test"
@@ -83,3 +84,31 @@ class SchedulerTests(unittest.TestCase):
         def timeout(url): raise IngestionError("timeout")
         result=Scheduler(self.dsn,transport=timeout).run_due()[0]
         self.assertEqual((result["outcome"],result["error_code"]),("failed","timeout"))
+
+    def test_parallel_workers_and_shared_bucket(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        for i in range(8):
+            self.host=str(uuid4())+".example.test"
+            self.job()
+        barrier=Barrier(8)
+        def worker(i):
+            barrier.wait(timeout=10)
+            return Scheduler(self.dsn,transport=feed).run_due(limit=1)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results=[row for batch in pool.map(worker,range(8)) for row in batch]
+        self.assertEqual(sum(row["outcome"]=="success" for row in results),1)
+        self.assertEqual(self.sql("SELECT count(*) FROM lavlah.https_observations WHERE permission_id IN (SELECT id FROM lavlah.ingestion_permissions WHERE organization_id=%s)",(self.org,)),[(1,)])
+    def test_committed_run_reconciliation(self):
+        from lavlah.https_adapter import collect_registered
+        pid=self.job()
+        s=Scheduler(self.dsn,transport=feed)
+        job,run=s._claim()
+        collect_registered(self.dsn,pid,self.actor,feed,run_id=run)
+        self.sql("UPDATE lavlah.https_scheduler_runs SET lease_until=now()-interval '1 second' WHERE id=%s",(run,))
+        self.assertTrue(any(a["code"]=="expired_lease" for a in s.alerts()))
+        self.assertEqual(s.recover(),1)
+        self.assertEqual(s.recover(),0)
+        self.assertEqual(self.sql("SELECT outcome,record_count FROM lavlah.https_scheduler_runs WHERE id=%s",(run,)),[("success",1)])
+        self.sql("UPDATE lavlah.collection_jobs SET failures=3 WHERE permission_id=%s",(pid,))
+        self.assertTrue(any(a["code"]=="repeated_failure" for a in s.alerts()))

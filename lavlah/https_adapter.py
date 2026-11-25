@@ -125,6 +125,9 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
         with c.transaction():
             c.execute("SET LOCAL ROLE lavlah_ingestion")
             c.execute("SET LOCAL statement_timeout='5s'")
+            if run_id is not None:
+                active=c.execute("SELECT 1 FROM lavlah.https_scheduler_runs WHERE id=%s AND permission_id=%s AND outcome='running' AND lease_until>clock_timestamp() FOR UPDATE",(run_id,pid)).fetchone()
+                if not active: raise IngestionError("lease_expired")
             grant=permission(c,pid)
             source=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled FOR UPDATE",(pid,)).fetchone()
             if not source or source["endpoint"]!=grant["source_url"]:
@@ -134,7 +137,8 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
                 WHERE permission_id=%s AND next_fetch_at<=clock_timestamp() RETURNING endpoint""",(pid,)).fetchone()
             if not reserved: raise IngestionError("rate_limited")
             endpoint=reserved["endpoint"]
-            if reserve_domain is not None: reserve_domain(c,endpoint)
+            from lavlah.scheduler import reserve_domain as shared_reservation
+            shared_reservation(c,endpoint)
         try:
             raw=fetch(endpoint)
             with c.transaction():
@@ -142,6 +146,7 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
                 if run_id is not None:
                     active=c.execute("SELECT 1 FROM lavlah.https_scheduler_runs WHERE id=%s AND permission_id=%s AND outcome='running' AND lease_until>clock_timestamp() FOR UPDATE",(run_id,pid)).fetchone()
                     if not active: raise IngestionError("lease_expired")
+                c.execute("SET LOCAL statement_timeout='5s'")
                 grant=permission(c,pid)
                 current=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled",(pid,)).fetchone()
                 if not current or current["endpoint"]!=endpoint or grant["source_url"]!=endpoint:
@@ -151,8 +156,8 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
                 prior=c.execute("SELECT max(source_updated_at) AS t FROM lavlah.https_observations WHERE permission_id=%s",(pid,)).fetchone()["t"]
                 if prior is not None and updated<=prior:
                     raise IngestionError("stale_replay")
-                obs=c.execute("""INSERT INTO lavlah.https_observations(permission_id,source_updated_at,body_sha256,record_count)
-                    VALUES (%s,%s,%s,%s) RETURNING id""",(pid,updated,digest,len(records))).fetchone()["id"]
+                obs=c.execute("""INSERT INTO lavlah.https_observations(permission_id,source_updated_at,body_sha256,record_count,scheduler_run_id)
+                    VALUES (%s,%s,%s,%s,%s) RETURNING id""",(pid,updated,digest,len(records),run_id)).fetchone()["id"]
                 for record in records:
                     row,fingerprint=prepare(record)
                     c.execute("""INSERT INTO lavlah.ingestion_candidates(permission_id,submitted_by,name,category_slug,description,digest,observed_at,observation_day,https_observation_id)

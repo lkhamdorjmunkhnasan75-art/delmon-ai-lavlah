@@ -12,8 +12,9 @@
 - [x] T07.1 Scheduled local adapter, refresh candidates, exact cross-source deduplication and operational tests. Verified on 032c1c7: 41 distinct tests; CI 45444574453 / 45444574267 passed. No live scheduler activated.
 - [x] T07.2 Authorized HTTPS JSON adapter, endpoint registry, SSRF defense, per-permission rate limits and freshness evidence. Verified on 6cf48c8: 49 distinct tests; CI 45510618763 / 45510618749 passed, including mocked TLS and mid-fetch revocation. Offline transport only; production egress, aggregate rate limits, scheduler wiring, independent freshness verification and identity/security remain release gates.
 - [x] T07.3 Integrated HTTPS scheduler, exact-host rate limits, bounded transport, recovery and monitoring. Verified on 71906a1: 54 distinct tests; CI 45513848477 / 45513848562 passed. Offline only.
-- [ ] T07.4 Reliability hardening, concurrent workers, reconciliation, deadlines, domain groups, alerts and backup/restore.
+- [x] T07.4 Reliability hardening, concurrent workers, reconciliation, deadlines, domain groups, alerts and backup/restore. Verified on adb976d: 56 distinct tests; CI 45533637853 / 45533637911 passed; PostgreSQL 16.16 logical restore row and selected ACL checks passed. Offline only; multi-process/multi-host load, offsite encrypted backups and production monitoring remain gates.
 - [ ] T08 Pilot and security review.
+- [ ] T08.1 Isolated synthetic Mongolian pilot directory fixtures and offline integration tests.
 Start T01 and T02. Keep each change reviewable. Update task status only after verified tests. 
 
 Organization subscription: 300000 MNT/year; free basic listing; paid service includes catalog management, lead/RFQ intake and analytics. Do not imply unlimited AI usage. Subscription entitlement and expiry must be tested; no live billing without approval.

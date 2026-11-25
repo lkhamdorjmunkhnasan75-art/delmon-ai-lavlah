@@ -15,6 +15,12 @@ LEASE_SECONDS=120
 
 def reserve_domain(c,endpoint):
     host,_=endpoint_parts(endpoint)
+    # A universal bucket prevents alias/subdomain bypass even with missing mappings.
+    group=c.execute("SELECT group_key FROM lavlah.https_domain_groups WHERE host=%s",(host,)).fetchone()
+    for key in sorted({"!global",host,"group:"+group["group_key"] if group else "!global"}):
+        _reserve_slot(c,key)
+
+def _reserve_slot(c,host):
     row=c.execute("""INSERT INTO lavlah.https_domain_slots(host,next_at)
         VALUES (%s,clock_timestamp()+%s*interval '1 second')
         ON CONFLICT(host) DO UPDATE SET next_at=excluded.next_at
@@ -38,12 +44,18 @@ class Scheduler:
         with self._connect() as c:
             with c.transaction():
                 self._role(c)
-                rows=c.execute("""UPDATE lavlah.https_scheduler_runs SET outcome='interrupted',
-                    finished_at=clock_timestamp(),error_code='lease_expired'
-                    WHERE outcome='running' AND lease_until<=clock_timestamp() RETURNING permission_id""").fetchall()
+                rows=c.execute("""SELECT r.id,r.permission_id FROM lavlah.https_scheduler_runs r
+                    WHERE outcome='running' AND lease_until<=clock_timestamp()
+                    ORDER BY id FOR UPDATE SKIP LOCKED""").fetchall()
                 for row in rows:
-                    c.execute("""UPDATE lavlah.collection_jobs SET next_run=clock_timestamp()+interval '15 minutes',
-                        failures=least(failures+1,16) WHERE permission_id=%s""",(row["permission_id"],))
+                    obs=c.execute("SELECT record_count FROM lavlah.https_observations WHERE scheduler_run_id=%s",(row["id"],)).fetchone()
+                    c.execute("""UPDATE lavlah.https_scheduler_runs SET outcome=%s,record_count=%s,
+                        finished_at=clock_timestamp(),error_code=%s WHERE id=%s""",
+                        ("success" if obs else "interrupted",obs["record_count"] if obs else 0,None if obs else "lease_expired",row["id"]))
+                    c.execute("""UPDATE lavlah.collection_jobs SET
+                        next_run=clock_timestamp()+(CASE WHEN %s THEN interval_minutes ELSE 15 END)*interval '1 minute',
+                        failures=CASE WHEN %s THEN 0 ELSE least(failures+1,16) END WHERE permission_id=%s""",
+                        (bool(obs),bool(obs),row["permission_id"]))
                 return len(rows)
     def _claim(self):
         with self._connect() as c:
@@ -101,6 +113,11 @@ class Scheduler:
             if self._finish(job,run,outcome,count,code):
                 results.append({"run_id":str(run),"outcome":outcome,"record_count":count,"error_code":code})
         return results
+    def alerts(self):
+        with self._connect() as c:
+            with c.transaction():
+                self._role(c)
+                return c.execute("SELECT * FROM lavlah.scheduler_alerts ORDER BY code").fetchall()
     def stats(self):
         with self._connect() as c:
             with c.transaction():
@@ -111,7 +128,7 @@ def main():
     dsn=os.environ["LAVLAH_INGESTION_DSN"]
     scheduler=Scheduler(dsn,allow_network=os.environ.get("LAVLAH_ENABLE_HTTPS")=="1")
     local=Runner(dsn,LocalJSONAdapter(os.environ["LAVLAH_FEED_DIR"]),exclude_https=True)
-    print(json.dumps({"local":local.run_due(),"https":scheduler.run_due(),"https_stats":scheduler.stats()}))
+    print(json.dumps({"local":local.run_due(),"https":scheduler.run_due(),"https_stats":scheduler.stats(),"alerts":scheduler.alerts()}))
 
 if __name__=="__main__":
     main()
