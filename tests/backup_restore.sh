@@ -15,8 +15,8 @@ pg_dump() {
 pg_restore() {
   docker exec -i -e PGPASSWORD="$PGPASSWORD" "$container_id" pg_restore -h 127.0.0.1 -U "$PGUSER" "$@"
 }
-pg_dump --version
-pg_restore --version
+docker exec "$container_id" pg_dump --version
+docker exec "$container_id" pg_restore --version
 work=$(mktemp -d)
 target="lavlah_restore_${RANDOM}_$$"
 trap 'dropdb --if-exists "$target"; rm -rf "$work"' EXIT
