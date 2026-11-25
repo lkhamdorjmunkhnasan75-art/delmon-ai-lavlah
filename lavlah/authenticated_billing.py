@@ -45,9 +45,10 @@ class AuthenticatedBilling:
         row=c.execute("SELECT id FROM lavlah.users").fetchone()
         if not row:raise BillingConflict("Unknown identity")
         return row["id"]
-    def start(self,token,key,request,case,*,prior=None):
+    def start(self,token,key,request,case,*,prior=None,emergency=False):
+        # Internal caller classifies emergency; never accept this flag from public input.
         with identity_transaction(token) as c:
-            return self.service.start(self.actor(c),key,request,case,prior=prior)
+            return self.service.start(self.actor(c),key,request,case,prior=prior,emergency=emergency)
     def authorize(self,token,key,request,consent_mnt):
         with identity_transaction(token) as c:
             return self.service.authorize(self.actor(c),key,request,consent_mnt)
@@ -69,8 +70,8 @@ class AuthenticatedBilling:
         """Trusted operator only; aggregate internal ledger consistency, no provider calls."""
         with closing(psycopg.connect(self.service.dsn,connect_timeout=5,row_factory=dict_row)) as c:
             with c.transaction():
-                self.service._guard(c)
                 c.execute("SET TRANSACTION READ ONLY")
+                self.service._guard(c)
                 c.execute("SET LOCAL ROLE lavlah_mock_billing")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 return c.execute("""WITH events AS (
