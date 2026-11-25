@@ -178,6 +178,13 @@ jobs:
           LAVLAH_TEST_ADMIN_DSN: postgresql://postgres:local-test@localhost:5432/postgres
           LAVLAH_INGESTION_DSN: postgresql://lavlah_ingest_test:ci-ingest-only@localhost:5432/postgres
         run: python -B -m unittest discover -s tests -p test_scheduler.py -v
+      - name: Synthetic identity migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/010_identity.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/010_identity.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/010_identity.sql
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_identity_login LOGIN PASSWORD 'ci-identity-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
+          psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_identity TO lavlah_identity_login"
       - name: Backup and restore disposable database
         run: bash tests/backup_restore.sh
       - name: Isolated synthetic pilot database
@@ -198,6 +205,8 @@ jobs:
           python -B -m unittest discover -s tests -p test_mongolian_qa.py -v
           python -B -m unittest discover -s tests -p test_grounded_ai.py -v
           python -B -m unittest discover -s tests -p test_pilot_security.py -v
+          export LAVLAH_IDENTITY_DSN=postgresql://lavlah_identity_login:ci-identity-only@127.0.0.1:5432/lavlah_pilot_test
+          python -B -m unittest discover -s tests -p test_identity_isolation.py -v
           python -m lavlah.pilot_fixtures seed
           export LAVLAH_ENV=pilot LAVLAH_PILOT_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
           export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
