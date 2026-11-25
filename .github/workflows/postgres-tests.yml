@@ -180,3 +180,19 @@ jobs:
         run: python -B -m unittest discover -s tests -p test_scheduler.py -v
       - name: Backup and restore disposable database
         run: bash tests/backup_restore.sh
+      - name: Isolated synthetic pilot database
+        env:
+          LAVLAH_PILOT_ONLY: '1'
+          LAVLAH_PILOT_INTEGRATION: '1'
+          LAVLAH_PILOT_DSN: postgresql://postgres:local-test@127.0.0.1:5432/lavlah_pilot_test
+          LAVLAH_PUBLIC_DSN: postgresql://lavlah_integration_login:ci-only-password@127.0.0.1:5432/lavlah_pilot_test
+        run: |
+          createdb lavlah_pilot_test
+          trap 'dropdb --if-exists lavlah_pilot_test' EXIT
+          service=$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}')
+          docker exec -e PGPASSWORD="$PGPASSWORD" "$service" pg_dump -h 127.0.0.1 -U postgres --schema-only --schema=lavlah postgres > /tmp/lavlah-pilot-schema.sql
+          psql -X -v ON_ERROR_STOP=1 -d lavlah_pilot_test -f /tmp/lavlah-pilot-schema.sql
+          psql -X -v ON_ERROR_STOP=1 -c "ALTER DATABASE lavlah_pilot_test SET lavlah.pilot_only='yes'"
+          export LAVLAH_PILOT_CONTAINER_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$service")
+          python -B -m unittest discover -s tests -p test_pilot_fixtures.py -v
+          rm -f /tmp/lavlah-pilot-schema.sql

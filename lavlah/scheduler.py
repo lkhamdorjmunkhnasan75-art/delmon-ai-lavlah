@@ -70,8 +70,11 @@ class Scheduler:
                     ORDER BY j.next_run,j.permission_id LIMIT 1 FOR UPDATE OF j SKIP LOCKED""").fetchone()
                 if not job: return None
                 run=c.execute("""INSERT INTO lavlah.https_scheduler_runs(permission_id,lease_until)
-                    VALUES (%s,clock_timestamp()+%s*interval '1 second') RETURNING id""",
+                    VALUES (%s,clock_timestamp()+%s*interval '1 second')
+                    ON CONFLICT (permission_id) WHERE outcome='running' DO NOTHING RETURNING id""",
                     (job["permission_id"],LEASE_SECONDS)).fetchone()
+                # A concurrent claim may have committed after our SELECT snapshot.
+                if not run: return None
                 return job,run["id"]
     def _finish(self,job,run,outcome,count,code):
         with self._connect() as c:
