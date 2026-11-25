@@ -155,6 +155,7 @@ def collect_registered(dsn,permission_id,actor,fetch=None,*,reserve_domain=None,
                     if not active: raise IngestionError("lease_expired")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 grant=permission(c,pid)
+                require_actor(c,pid,actor,"collect")
                 current=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled",(pid,)).fetchone()
                 if not current or current["endpoint"]!=endpoint or grant["source_url"]!=endpoint:
                     raise IngestionError("endpoint_not_authorized")
