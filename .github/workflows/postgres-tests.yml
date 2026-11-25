@@ -192,6 +192,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/011_api_limits.sql
           psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_rate_login LOGIN PASSWORD 'ci-rate-only' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
           psql -X -v ON_ERROR_STOP=1 -c "GRANT lavlah_rate TO lavlah_rate_login"
+      - name: Ingestion integrity migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/012_ingestion_integrity.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/012_ingestion_integrity.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/012_ingestion_integrity.sql
       - name: Backup and restore disposable database
         run: bash tests/backup_restore.sh
       - name: Isolated synthetic pilot database
@@ -216,6 +221,9 @@ jobs:
           python -B -m unittest discover -s tests -p test_identity_isolation.py -v
           export LAVLAH_RATE_DSN=postgresql://lavlah_rate_login:ci-rate-only@127.0.0.1:5432/lavlah_pilot_test
           python -B -m unittest discover -s tests -p test_api_limits.py -v
+          export LAVLAH_INGESTION_DSN=postgresql://lavlah_ingest_test:ci-ingest-only@127.0.0.1:5432/lavlah_pilot_test
+          export LAVLAH_REVIEW_DSN=postgresql://lavlah_review_test:ci-review-only@127.0.0.1:5432/lavlah_pilot_test
+          python -B -m unittest discover -s tests -p test_ingestion_integrity.py -v
           python -m lavlah.pilot_fixtures seed
           export LAVLAH_ENV=pilot LAVLAH_PILOT_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
           export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
