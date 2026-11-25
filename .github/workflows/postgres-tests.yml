@@ -197,4 +197,21 @@ jobs:
           python -B -m unittest discover -s tests -p test_pilot_fixtures.py -v
           python -B -m unittest discover -s tests -p test_mongolian_qa.py -v
           python -B -m unittest discover -s tests -p test_grounded_ai.py -v
-          rm -f /tmp/lavlah-pilot-schema.sql
+          python -m lavlah.pilot_fixtures seed
+          export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
+          python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8001 > /tmp/pilot-api.log 2>&1 &
+          api=$!
+          (cd pwa && exec node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3001) > /tmp/pilot-next.log 2>&1 &
+          ui=$!
+          trap 'kill "$api" "$ui" 2>/dev/null || true; dropdb --if-exists --force lavlah_pilot_test; rm -f /tmp/lavlah-pilot-schema.sql; cat /tmp/pilot-api.log /tmp/pilot-next.log' EXIT
+          for port in 8001 3001; do
+            for i in $(seq 1 60); do
+              if curl --fail --silent http://127.0.0.1:$port/ >/dev/null; then break; fi
+              sleep 1
+            done
+            curl --fail --silent http://127.0.0.1:$port/ >/dev/null
+          done
+          kill -0 "$api" "$ui"
+          set -o pipefail
+          curl --fail-with-body --silent --show-error -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
+          timeout 120 python -B -m unittest discover -s tests -p browser_pilot_chat.py -v

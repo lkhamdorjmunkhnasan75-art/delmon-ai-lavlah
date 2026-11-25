@@ -1,5 +1,6 @@
 "use client";
 import {useEffect,useRef,useState} from "react";
+import PilotChat from "./PilotChat";
 const labels={services:"Үйлчилгээ",trade:"Худалдаа",construction:"Барилга",education:"Боловсрол",health:"Эрүүл мэнд",transport:"Тээвэр",agriculture:"Хөдөө аж ахуй",technology:"Технологи",tourism:"Аялал жуулчлал",finance:"Санхүү",manufacturing:"Үйлдвэрлэл",mining:"Уул уурхай"};
 const label=s=>Object.hasOwn(labels,s)?labels[s]:"Ангилал: "+s;
 function safeLink(value){try{const u=new URL(value);return ["https:","http:"].includes(u.protocol)?u.href:null;}catch{return null;}}
@@ -30,5 +31,5 @@ export default function Home(){
  {categoryError&&<p role="status">Ангиллыг ачаалж чадсангүй. Нэрээр хайх боломжтой.</p>}<button type="submit">Хайх</button></form>
  <p id="status" role="status" aria-live="polite">{message}</p><section aria-label="Хайлтын үр дүн" id="results">{rows.map(row=><article key={row.organization_id}><h2>{row.name}</h2><p>{row.description}</p><p>{displayLabel(row.category_slug)}</p>{safeLink(row.source_url)&&<a href={safeLink(row.source_url)} target="_blank" rel="noopener noreferrer">Эх сурвалж</a>}<p>Баталгаажсан: {new Date(row.verified_at).toLocaleDateString("mn-MN")}</p></article>)}</section>
  <nav aria-label="Хуудаслалт"><button disabled={busy||offset===0} onClick={()=>search(active.current,Math.max(0,offset-20))}>Өмнөх</button><button disabled={busy||!hasNext} onClick={()=>search(active.current,offset+20)}>Дараах</button></nav>
- <footer>Зөвхөн баталгаажсан, нийтэд зөвшөөрсөн мэдээлэл. Интернэт холболт шаардлагатай.</footer></main>;
+ <PilotChat/><footer>Зөвхөн баталгаажсан, нийтэд зөвшөөрсөн мэдээлэл. Интернэт холболт шаардлагатай.</footer></main>;
 }
