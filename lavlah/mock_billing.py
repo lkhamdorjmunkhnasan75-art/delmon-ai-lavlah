@@ -1,6 +1,7 @@
 """Internal mock billing only. Actor and inquiry outcome must come from trusted server.
 No provider calls, bank accounts, real funds or public endpoints.
 """
+import os
 from datetime import date
 from uuid import UUID, uuid4
 from contextlib import closing
@@ -19,22 +20,36 @@ def annual_expiry(start):
         return start.replace(year=start.year+1, day=28)
 
 class MockBilling:
-    def __init__(self, dsn):
+    def __init__(self, dsn, *, strict=False):
         self.dsn=dsn
+        self.strict=strict
 
-    def _command(self, actor, key, payload, operation):
+    def _guard(self,c):
+        if self.strict:
+            from lavlah.identity_store import check_connection
+            check_connection(c,'lavlah_billing_test')
+        elif os.getenv('LAVLAH_ENV') in ('pilot','production'):
+            raise BillingConflict('Authenticated mock billing required')
+
+    def _command(self, actor, key, payload, operation, *, callback=None):
         actor, key=UUID(str(actor)), UUID(str(key))
-        with closing(psycopg.connect(self.dsn,row_factory=dict_row)) as c:
+        with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                self._guard(c)
                 c.execute("SET LOCAL ROLE lavlah_mock_billing")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 # Serialize by command key; no duplicate execution even on concurrent retry.
                 c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",(str(key),))
                 old=c.execute("SELECT * FROM lavlah.mock_commands WHERE key=%s",(key,)).fetchone()
                 if old:
+                    if callback is not None:
+                        prior=c.execute("SELECT payload_sha256 FROM lavlah.mock_callbacks WHERE id=%s",(key,)).fetchone()
+                        if not prior or prior["payload_sha256"]!=callback:raise BillingConflict("Callback replay conflict")
                     if old["actor_id"]!=actor or old["payload"]!=payload:
                         raise BillingConflict("Idempotency key conflict")
                     return old["result"]
+                if callback is not None:
+                    c.execute("INSERT INTO lavlah.mock_callbacks(id,actor_id,operation,payload_sha256) VALUES (%s,%s,%s,%s)",(key,actor,payload["op"],callback))
                 result=operation(c,actor)
                 c.execute("INSERT INTO lavlah.mock_commands VALUES (%s,%s,%s,%s)",(key,actor,Jsonb(payload),Jsonb(result)))
                 return result
@@ -93,7 +108,8 @@ class MockBilling:
             return {"payment":str(p["id"]),"authorized_mnt":1000}
         return self._command(actor,key,{"op":"authorize","request":str(request),"consent_mnt":consent_mnt},run)
 
-    def finish(self,actor,key,request,*,resolved):
+    def finish(self,actor,key,request,*,resolved,callback=None):
+        if self.strict and callback is None:raise BillingConflict("Signed outcome required")
         request=UUID(str(request))
         if type(resolved) is not bool: raise ValueError("Boolean outcome required")
         def run(c,a):
@@ -106,9 +122,10 @@ class MockBilling:
                 if p: self._transition(c,p,"captured" if resolved else "released","capture" if resolved else "release")
                 c.execute("UPDATE lavlah.mock_inquiries SET state=%s WHERE id=%s",(target,request))
             return {"state":target,"charged_mnt":1000 if resolved and p and p["state"]!="refunded" else 0,"released_mnt":1000 if not resolved and p else 0}
-        return self._command(actor,key,{"op":"finish","request":str(request),"resolved":resolved},run)
+        return self._command(actor,key,{"op":"finish","request":str(request),"resolved":resolved},run,callback=callback)
 
-    def subscribe(self,actor,key,organization,consent_mnt,*,on):
+    def subscribe(self,actor,key,organization,consent_mnt,*,on,callback=None):
+        if self.strict and callback is None:raise BillingConflict("Signed subscription required")
         org=UUID(str(organization))
         if type(consent_mnt) is not int or consent_mnt!=300000 or type(on) is not date:
             raise ValueError("Explicit annual quote and trusted date required")
@@ -124,21 +141,23 @@ class MockBilling:
             expires=annual_expiry(on)
             c.execute("INSERT INTO lavlah.mock_terms VALUES (%s,%s,%s,%s)",(p["id"],org,on,expires))
             return {"payment":str(p["id"]),"charged_mnt":300000,"starts_on":on.isoformat(),"expires_on":expires.isoformat()}
-        return self._command(actor,key,{"op":"subscribe","org":str(org),"consent_mnt":consent_mnt,"on":on.isoformat()},run)
+        return self._command(actor,key,{"op":"subscribe","org":str(org),"consent_mnt":consent_mnt,"on":on.isoformat()},run,callback=callback)
 
-    def refund(self,actor,key,payment):
+    def refund(self,actor,key,payment,*,callback=None):
         """Internal approved full refund; not exposed to the public."""
+        if self.strict and callback is None:raise BillingConflict("Signed refund required")
         payment=UUID(str(payment))
         def run(c,a):
             p=c.execute("SELECT * FROM lavlah.mock_payments WHERE id=%s AND actor_id=%s FOR UPDATE",(payment,a)).fetchone()
             if not p or p["state"] not in ("captured","refunded"): raise BillingConflict("Refund unavailable")
             if p["state"]=="captured": self._transition(c,p,"refunded","refund")
             return {"payment":str(payment),"refunded_mnt":p["amount_mnt"]}
-        return self._command(actor,key,{"op":"refund","payment":str(payment)},run)
+        return self._command(actor,key,{"op":"refund","payment":str(payment)},run,callback=callback)
 
     def entitlements(self,actor,organization,on):
-        with closing(psycopg.connect(self.dsn,row_factory=dict_row)) as c:
+        with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                self._guard(c)
                 c.execute("SET LOCAL ROLE lavlah_mock_billing")
                 member=c.execute("SELECT 1 FROM lavlah.memberships WHERE user_id=%s AND organization_id=%s",(actor,organization)).fetchone()
                 if not member: raise BillingConflict("Membership required")
