@@ -193,5 +193,6 @@ jobs:
           docker exec -e PGPASSWORD="$PGPASSWORD" "$service" pg_dump -h 127.0.0.1 -U postgres --schema-only --schema=lavlah postgres > /tmp/lavlah-pilot-schema.sql
           psql -X -v ON_ERROR_STOP=1 -d lavlah_pilot_test -f /tmp/lavlah-pilot-schema.sql
           psql -X -v ON_ERROR_STOP=1 -c "ALTER DATABASE lavlah_pilot_test SET lavlah.pilot_only='yes'"
+          export LAVLAH_PILOT_CONTAINER_IP=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$service")
           python -B -m unittest discover -s tests -p test_pilot_fixtures.py -v
           rm -f /tmp/lavlah-pilot-schema.sql
