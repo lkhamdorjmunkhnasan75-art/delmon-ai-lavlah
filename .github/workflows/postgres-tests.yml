@@ -197,9 +197,11 @@ jobs:
           python -B -m unittest discover -s tests -p test_pilot_fixtures.py -v
           python -B -m unittest discover -s tests -p test_mongolian_qa.py -v
           python -B -m unittest discover -s tests -p test_grounded_ai.py -v
+          python -B -m unittest discover -s tests -p test_pilot_security.py -v
           python -m lavlah.pilot_fixtures seed
+          export LAVLAH_ENV=pilot LAVLAH_PILOT_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
           export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
-          python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8001 > /tmp/pilot-api.log 2>&1 &
+          python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8001 --no-proxy-headers --no-access-log > /tmp/pilot-api.log 2>&1 &
           api=$!
           (cd pwa && exec node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3001) > /tmp/pilot-next.log 2>&1 &
           ui=$!
@@ -213,5 +215,7 @@ jobs:
           done
           kill -0 "$api" "$ui"
           set -o pipefail
-          curl --fail-with-body --silent --show-error -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
+          token=$(python -c 'import os,json; print(json.dumps({"password":os.environ["LAVLAH_PILOT_PASSWORD"]}))' | curl --fail --silent --show-error -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d @- http://127.0.0.1:3001/api/pilot/login | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          curl --fail-with-body --silent --show-error -H "Authorization: Bearer $token" -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
+          unset token
           timeout 120 python -B -m unittest discover -s tests -p browser_pilot_chat.py -v
