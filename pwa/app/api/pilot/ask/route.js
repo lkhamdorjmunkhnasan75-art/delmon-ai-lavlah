@@ -19,8 +19,8 @@ export async function POST(request){
   if(!body||typeof body.question!=="string"||Object.keys(body).length!==1||!body.question.trim()||body.question.length>240)return reply({error:"Invalid input"},422);
   const origin=new URL(process.env.LAVLAH_API_ORIGIN||"http://127.0.0.1:8000");
   if(origin.protocol!=="http:"||origin.hostname!=="127.0.0.1"||origin.username||origin.password)return reply({error:"Unavailable"},503);
-  const upstream=await fetch(new URL("/v1/pilot/grounded-ask",origin),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:body.question}),cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
-  if(!upstream.ok)return reply({error:"Unavailable"},upstream.status===422?422:503);
+  const upstream=await fetch(new URL("/v1/pilot/grounded-ask",origin),{method:"POST",headers:{"Content-Type":"application/json","Authorization":request.headers.get("authorization")||""},body:JSON.stringify({question:body.question}),cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
+  if(!upstream.ok)return reply({error:"Unavailable"},[401,403,422,429].includes(upstream.status)?upstream.status:503);
   return reply(await upstream.json(),200);
  }catch{return reply({error:"Unavailable"},503);}
 }
