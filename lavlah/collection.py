@@ -25,8 +25,9 @@ class LocalJSONAdapter:
         return records
 
 class Runner:
-    def __init__(self,dsn,adapter):
+    def __init__(self,dsn,adapter,*,exclude_https=False):
         self.dsn,self.adapter=dsn,adapter
+        self.exclude_https=exclude_https
     def run_due(self,limit=10):
         if type(limit) is not int or not 1<=limit<=100:
             raise ValueError("Invalid limit")
@@ -36,9 +37,11 @@ class Runner:
                 with c.transaction():
                     c.execute("SET LOCAL ROLE lavlah_ingestion")
                     c.execute("SET LOCAL statement_timeout='10s'")
-                    job=c.execute("""SELECT * FROM lavlah.collection_jobs
-                      WHERE enabled AND next_run<=now() ORDER BY next_run,permission_id
-                      LIMIT 1 FOR UPDATE SKIP LOCKED""").fetchone()
+                    query="""SELECT * FROM lavlah.collection_jobs
+                      WHERE enabled AND next_run<=now()"""
+                    if self.exclude_https:
+                        query+=" AND NOT EXISTS (SELECT 1 FROM lavlah.https_sources s WHERE s.permission_id=collection_jobs.permission_id)"
+                    job=c.execute(query+" ORDER BY next_run,permission_id LIMIT 1 FOR UPDATE SKIP LOCKED").fetchone()
                     if not job: break
                     pid=job["permission_id"]
                     outcome,code,count="success",None,0
