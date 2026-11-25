@@ -5,12 +5,12 @@ import unicodedata
 ALIASES={"altan nar":"алтан нар","hoh tenger":"хөх тэнгэр",
          "huh tenger":"хөх тэнгэр","zasvar":"засвар",
          "hudaldaa":"худалдаа","khudaldaa":"худалдаа",
-         "surgalt":"сургалт","hurgelt":"хүргэлт"}
+         "surgalt":"сургалт","hurgelt":"хүргэлт","nogoon tal":"ногоон тал","tsagaan uul":"цагаан уул"}
 STOP={"хаана","байна","уу","вэ","юу","олох","хайх","хайж","өгөөч",
       "байдаг","мэдээлэл","талаар","өгнө","үү","надад","хэрэгтэй",
-      "haana","baina","ve","uu","haih","medeelel"}
+      "haana","baina","ve","uu","haih","medeelel","байгаа","байдаг","хайгаад","хайгаач","хаанаас","тухай","hai","haanaas","heregtei","ugooch"}
 UNSUPPORTED={"үнэ","үнэтэй","утас","хаяг","цаг","дугаар","баталгаа",
-             "une","utas","hayag","tsag","dugaar"}
+             "une","utas","hayag","tsag","dugaar","хэд","төгрөг","үнээр","утасны","хаягийг","hed","uneer","хэзээ"}
 def interpret(question):
     if not isinstance(question,str) or not 1<=len(question)<=240:
         raise ValueError("Question must contain 1–240 characters")
@@ -25,9 +25,10 @@ def interpret(question):
     for latin,cyr in sorted(ALIASES.items(),key=lambda pair:-len(pair[0])):
         phrase=re.sub(r"(?<!\w)"+re.escape(latin)+r"(?!\w)",cyr,phrase)
     terms=[w for w in phrase.split() if w not in STOP]
-    if not terms or len(terms)>8 or any(re.search(r"[a-z]",w) for w in terms):
+    if not terms or len(terms)>8 or any(not re.fullmatch(r"[а-яёөү]+",w) for w in terms):
         return None
-    return " ".join(terms)
+    query=" ".join(terms)
+    return query if len(query)<=120 else None
 
 def answer(question,search):
     """search is a trusted restricted public-directory reader."""
