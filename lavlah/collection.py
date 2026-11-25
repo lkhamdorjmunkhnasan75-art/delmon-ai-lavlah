@@ -1,11 +1,13 @@
 """Opt-in scheduled collector. No automatic publication or untrusted URL fetching."""
 import json
+import os
+import stat
 from contextlib import closing
 from pathlib import Path
 from uuid import UUID
 import psycopg
 from psycopg.rows import dict_row
-from lavlah.ingestion import prepare, permission, IngestionError
+from lavlah.ingestion import prepare, permission, IngestionError, require_actor, strict_connection
 
 class LocalJSONAdapter:
     """Operator-provisioned file mapping by permission UUID; never accepts remote paths."""
@@ -13,10 +15,16 @@ class LocalJSONAdapter:
         self.root=Path(root).resolve()
     def collect(self, grant):
         path=self.root/(str(UUID(str(grant["id"])))+".json")
-        if path.resolve().parent!=self.root or path.is_symlink():
-            raise IngestionError("Invalid feed path")
-        with path.open("rb") as f:
-            raw=f.read(512001)
+        try:
+            root=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            try:
+                fd=os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=root)
+                with os.fdopen(fd,"rb") as f:
+                    if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                        raise IngestionError("Invalid feed type")
+                    raw=f.read(512001)
+            finally:os.close(root)
+        except OSError:raise IngestionError("Invalid feed path") from None
         if len(raw)>512000:
             raise IngestionError("Feed too large")
         records=json.loads(raw)
@@ -35,6 +43,7 @@ class Runner:
         for _ in range(limit):
             with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
                 with c.transaction():
+                    strict_connection(c,"lavlah_ingest_test")
                     c.execute("SET LOCAL ROLE lavlah_ingestion")
                     c.execute("SET LOCAL statement_timeout='10s'")
                     query="""SELECT * FROM lavlah.collection_jobs
@@ -48,8 +57,11 @@ class Runner:
                     try:
                         with c.transaction():
                             grant=permission(c,pid)
+                            require_actor(c,pid,job["actor_id"],"collect")
                             try: records=self.adapter.collect(grant)
                             except Exception: raise IngestionError("adapter_error") from None
+                            permission(c,pid)
+                            require_actor(c,pid,job["actor_id"],"collect")
                             if not isinstance(records,list) or not 1<=len(records)<=100:
                                 raise IngestionError("record_invalid")
                             for record in records:

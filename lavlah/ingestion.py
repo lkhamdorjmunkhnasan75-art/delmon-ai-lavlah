@@ -1,5 +1,6 @@
 """Internal ingestion of pre-authorized structured records, no network crawling."""
 import hashlib
+import os
 import json
 import unicodedata
 from contextlib import closing
@@ -35,13 +36,28 @@ def permission(c,identifier):
     # Serialize permission changes and all ingestions/reviews for a permission.
     c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,7))",(str(identifier),))
     row=c.execute("""SELECT * FROM lavlah.ingestion_permissions
-        WHERE id=%s AND NOT revoked AND valid_until>now()""",(identifier,)).fetchone()
+        WHERE id=%s AND NOT revoked AND valid_until>clock_timestamp()""",(identifier,)).fetchone()
     if not row:
         raise IngestionError("Active source permission required")
     url=urlsplit(row["source_url"])
     if url.scheme!="https" or not url.hostname or url.username or url.password or url.fragment:
         raise IngestionError("Invalid authorized public source URL")
     return row
+
+def strict_connection(c,login):
+    if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+        from lavlah.identity_store import check_connection
+        check_connection(c,login)
+
+def require_actor(c,permission_id,actor,capability):
+    if os.getenv("LAVLAH_INGESTION_STRICT")!="1":
+        if os.getenv("LAVLAH_ENV") in ("pilot","production"):
+            raise IngestionError("Strict ingestion required")
+        return
+    if os.getenv("LAVLAH_ENV")!="pilot" or os.getenv("LAVLAH_PILOT_ONLY")!="1":
+        raise IngestionError("Strict pilot required")
+    if not c.execute("SELECT 1 FROM lavlah.ingestion_actor_grants WHERE permission_id=%s AND user_id=%s AND capability=%s",(permission_id,actor,capability)).fetchone():
+        raise IngestionError("Actor not authorized")
 
 class Ingestion:
     def __init__(self,dsn,review_dsn=None):
@@ -53,11 +69,13 @@ class Ingestion:
         if not isinstance(records,list) or not 1<=len(records)<=100:
             raise IngestionError("Batch must contain 1–100 records")
         prepared=[prepare(row) for row in records]
-        with closing(psycopg.connect(self.dsn,row_factory=dict_row)) as c:
+        with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                strict_connection(c,"lavlah_ingest_test")
                 c.execute("SET LOCAL ROLE lavlah_ingestion")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 permission(c,permission_id)
+                require_actor(c,permission_id,actor,'collect')
                 results=[]
                 for row,digest in prepared:
                     inserted=c.execute("""INSERT INTO lavlah.ingestion_candidates
@@ -74,18 +92,24 @@ class Ingestion:
         candidate_id,reviewer=UUID(str(candidate_id)),UUID(str(reviewer))
         evidence=normalize(evidence,2000)
         if not evidence: raise IngestionError("Review evidence required")
-        with closing(psycopg.connect(self.review_dsn,row_factory=dict_row)) as c:
+        with closing(psycopg.connect(self.review_dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                strict_connection(c,"lavlah_review_test")
                 c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 row=c.execute("SELECT * FROM lavlah.ingestion_candidates WHERE id=%s",(candidate_id,)).fetchone()
                 if not row or row["submitted_by"]==reviewer:
                     raise IngestionError("Independent reviewer required")
                 grant=permission(c,row["permission_id"])
+                require_actor(c,row["permission_id"],reviewer,"review")
+                c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,12))",(str(grant["organization_id"]),))
                 if c.execute("SELECT 1 FROM lavlah.ingestion_reviews WHERE candidate_id=%s",(candidate_id,)).fetchone():
                     raise IngestionError("Already reviewed")
                 source=None
                 if approve:
+                    previous=c.execute("SELECT s.observed_at FROM lavlah.public_listings p JOIN lavlah.sources s ON s.id=p.source_id WHERE p.organization_id=%s",(grant["organization_id"],)).fetchone()
+                    if previous and previous["observed_at"]>=row["observed_at"]:
+                        raise IngestionError("Older or equal observation cannot replace publication")
                     # Freshness starts at observation, not delayed approval.
                     source=c.execute("""INSERT INTO lavlah.sources
                         (organization_id,submitted_by,source_url,authorization_reference,observed_at,verified_by,verified_at,expires_at)
@@ -104,4 +128,7 @@ class Ingestion:
                         (grant["organization_id"],source,row["name"],row["category_slug"],row["description"],grant["source_url"]))
                 c.execute("""INSERT INTO lavlah.ingestion_reviews(candidate_id,reviewer_id,decision,evidence,source_id)
                     VALUES (%s,%s,%s,%s,%s)""",(candidate_id,reviewer,"approved" if approve else "rejected",evidence,source))
+                if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+                    c.execute("""INSERT INTO lavlah.publication_audit(candidate_id,permission_id,organization_id,reviewer_id,digest,observed_at,decision,source_id)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",(candidate_id,row["permission_id"],grant["organization_id"],reviewer,row["digest"],row["observed_at"],"approved" if approve else "rejected",source))
                 return {"decision":"approved" if approve else "rejected","source_id":str(source) if source else None}

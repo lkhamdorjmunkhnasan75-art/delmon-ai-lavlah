@@ -39,7 +39,7 @@ def public_addresses(host, resolver=socket.getaddrinfo):
         ip=ipaddress.ip_address(answer[4][0])
         if (not ip.is_global or ip.is_multicast or ip.is_reserved
             or getattr(ip,"ipv4_mapped",None) or getattr(ip,"scope_id",None)
-            or (ip.version==6 and (ip.sixtofour or ip.teredo))):
+            or (ip.version==6 and (ip.sixtofour or ip.teredo or any(ip in ipaddress.ip_network(net) for net in ('64:ff9b::/96','64:ff9b:1::/48'))))):
             raise IngestionError("unsafe_address")
         addresses.append(str(ip))
     if not addresses:
@@ -113,22 +113,29 @@ def decode_envelope(raw,now,freshness_days):
         raise IngestionError("freshness_or_schema_invalid") from None
     return records,observed,hashlib.sha256(raw).hexdigest()
 
-def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain=None,run_id=None):
+def collect_registered(dsn,permission_id,actor,fetch=None,*,reserve_domain=None,run_id=None):
     """Reserve a request slot durably before network I/O; recheck permission before storing."""
     from contextlib import closing
     from uuid import UUID
     import psycopg
     from psycopg.rows import dict_row
-    from lavlah.ingestion import permission
+    from lavlah.ingestion import permission, require_actor, strict_connection
+    if fetch is None:
+        raise IngestionError('Explicit bounded transport required')
+    if fetch is fetch_json:
+        from lavlah.bounded_transport import bounded_fetch
+        fetch=bounded_fetch
     pid,actor=UUID(str(permission_id)),UUID(str(actor))
     with closing(psycopg.connect(dsn,row_factory=dict_row,connect_timeout=5)) as c:
         with c.transaction():
+            strict_connection(c,"lavlah_ingest_test")
             c.execute("SET LOCAL ROLE lavlah_ingestion")
             c.execute("SET LOCAL statement_timeout='5s'")
             if run_id is not None:
                 active=c.execute("SELECT 1 FROM lavlah.https_scheduler_runs WHERE id=%s AND permission_id=%s AND outcome='running' AND lease_until>clock_timestamp() FOR UPDATE",(run_id,pid)).fetchone()
                 if not active: raise IngestionError("lease_expired")
             grant=permission(c,pid)
+            require_actor(c,pid,actor,"collect")
             source=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled FOR UPDATE",(pid,)).fetchone()
             if not source or source["endpoint"]!=grant["source_url"]:
                 raise IngestionError("endpoint_not_authorized")
@@ -148,6 +155,7 @@ def collect_registered(dsn,permission_id,actor,fetch=fetch_json,*,reserve_domain
                     if not active: raise IngestionError("lease_expired")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 grant=permission(c,pid)
+                require_actor(c,pid,actor,"collect")
                 current=c.execute("SELECT * FROM lavlah.https_sources WHERE permission_id=%s AND enabled",(pid,)).fetchone()
                 if not current or current["endpoint"]!=endpoint or grant["source_url"]!=endpoint:
                     raise IngestionError("endpoint_not_authorized")
