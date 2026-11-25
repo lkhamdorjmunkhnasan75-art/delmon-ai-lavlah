@@ -58,6 +58,7 @@ class HTTPSUnitTests(unittest.TestCase):
 class HTTPSDatabaseTests(unittest.TestCase):
     def setUp(self):
         self.admin=os.environ["LAVLAH_TEST_ADMIN_DSN"]
+        self.sql("DELETE FROM lavlah.https_domain_slots")
         self.dsn=os.environ["LAVLAH_INGESTION_DSN"]
         self.actor,self.org,self.pid=[uuid4() for _ in range(3)]
         self.sql("INSERT INTO lavlah.users(id,auth_subject,display_name) VALUES (%s,%s,'Fixture')",(self.actor,str(self.actor)))
