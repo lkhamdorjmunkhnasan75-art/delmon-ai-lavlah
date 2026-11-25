@@ -1,6 +1,7 @@
 """Synthetic fixtures only; never contact sources or seed an existing database."""
 import argparse
 import os
+import ipaddress
 from uuid import UUID
 from contextlib import closing
 import psycopg
@@ -17,7 +18,17 @@ def identifier(n):
 
 def guard(c):
     db=c.execute("SELECT current_database(),inet_server_addr()::text").fetchone()
-    if db[0]!="lavlah_pilot_test" or db[1] not in ("127.0.0.1/32","::1/128","127.0.0.1","::1"):
+    if db[0]!="lavlah_pilot_test" or not db[1]:
+        raise ValueError("Dedicated loopback pilot database required")
+    actual=ipaddress.ip_interface(db[1]).ip
+    if actual.is_loopback:
+        return
+    # Docker port forwarding: the client still connects to numeric loopback.
+    # Accept only an explicitly pinned RFC1918 service address in integration CI.
+    expected=os.environ.get("LAVLAH_PILOT_CONTAINER_IP")
+    private=any(actual in ipaddress.ip_network(net) for net in
+                ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
+    if not (os.environ.get("LAVLAH_PILOT_INTEGRATION")=="1" and private and expected==str(actual)):
         raise ValueError("Dedicated loopback pilot database required")
 
 def validate_dsn(dsn):
@@ -31,7 +42,9 @@ def apply(dsn,*,reset=False):
     validate_dsn(dsn)
     if os.environ.get("LAVLAH_PILOT_ONLY")!="1":
         raise ValueError("Explicit pilot opt-in required")
-    with closing(psycopg.connect(dsn,connect_timeout=5)) as c:
+    # Explicit hostaddr also prevents inherited PGHOSTADDR overriding loopback.
+    host=conninfo_to_dict(dsn)["host"]
+    with closing(psycopg.connect(dsn,hostaddr=host,connect_timeout=5)) as c:
         with c.transaction():
             guard(c)
             if c.execute("SELECT current_setting('lavlah.pilot_only', true)").fetchone()[0]!="yes":
