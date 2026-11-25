@@ -19,6 +19,13 @@
 - [x] T08.3 Offline grounded mock AI selection, deterministic ranking, cited results, usage metrics and safe fallback. Verified on 470420e: 84 distinct tests (45 unit/API, 33 database, 6 browser); Python CI 45570854214 and PostgreSQL CI 45570854191 passed, including all 10 grounded AI tests, scheduler concurrency and backup/restore. Mock character units and synthetic rates only; no real charges. Persistent usage ledger, real model/token accounting, hard adapter deadlines, authentication, rate limits, production isolation and UI remain release gates.
 - [x] T08.4 Mobile PWA pilot chat, source dates, local feedback, loading/error states and browser integration. Verified on 1a32bec: 89 distinct tests (45 unit/API, 33 database, 11 browser); Python CI 45602252086 and PostgreSQL CI 45602252101 passed, including all 5 new pilot chat browser tests, scheduler concurrency and backup/restore. Isolated pilot ports and pinned numeric-loopback browser Origin/Host; feedback in memory only, no multi-turn context. Production authentication, rate limits, physical-device/human testing and persistent consent-based feedback remain release gates.
 - [x] T08.5 Pilot security controls, authentication, rate limits, privacy and release readiness review. Verified on 9616a1b: 97 distinct tests (53 unit/API, 33 database, 11 browser); Python CI 45605354317 and PostgreSQL CI 45605354315 passed, including 8 security tests, 5 authenticated pilot browser tests and backup/restore. Pilot scope only; public production NO-GO. See docs/release-readiness.md.
+- [x] T09.1 Integrated static audit and prioritized production roadmap; PR #1–16 metadata, cumulative compare and selected security-sensitive code reviewed against the 97-test baseline. See docs/t09-1-integrated-audit.md. Production NO-GO; independent review and exhaustive diff audit remain gates.
+- [ ] T09.2 Identity binding and deployment isolation (A01/A02).
+- [ ] T09.3 Shared API limits, abuse protection and deadlines (A03).
+- [ ] T09.4 Authorized collection and publication integrity (A05/A06/A09).
+- [ ] T09.5 Authenticated mock billing workflow and invariants (A04/A07).
+- [ ] T09.6 Grounded QA, privacy and PWA lifecycle (A08/A10).
+- [ ] T09.7 Release engineering, recovery and independent review (A11/A12).
 Start T01 and T02. Keep each change reviewable. Update task status only after verified tests. 
 
 Organization subscription: 300000 MNT/year; free basic listing; paid service includes catalog management, lead/RFQ intake and analytics. Do not imply unlimited AI usage. Subscription entitlement and expiry must be tested; no live billing without approval.
