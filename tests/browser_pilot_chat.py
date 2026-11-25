@@ -1,5 +1,8 @@
+import os
 import unittest
 from playwright.sync_api import sync_playwright, expect
+
+ORIGIN=os.environ.get("PILOT_CHAT_ORIGIN","http://127.0.0.1:3001")
 
 class PilotChatBrowser(unittest.TestCase):
     def setUp(self):
@@ -8,7 +11,7 @@ class PilotChatBrowser(unittest.TestCase):
         browser=pw.chromium.launch()
         self.addCleanup(browser.close)
         self.page=browser.new_page(viewport={"width":360,"height":800},is_mobile=True,has_touch=True,service_workers="block")
-        self.page.goto("http://127.0.0.1:3000/")
+        self.page.goto(ORIGIN+"/")
         expect(self.page.locator("#category option[value=services]")).to_have_count(1)
         self.chat=self.page.get_by_role("region",name="DELMON чат")
 
@@ -60,7 +63,7 @@ class PilotChatBrowser(unittest.TestCase):
         expect(self.chat.get_by_role("link",name="Эх сурвалж")).to_have_count(0)
 
     def test_proxy_origin_and_size(self):
-        endpoint="http://127.0.0.1:3000/api/pilot/ask"
+        endpoint=ORIGIN+"/api/pilot/ask"
         req=self.page.request
         self.assertEqual(req.post(endpoint,data={"question":"Алтан нар"},headers={"Origin":"https://example.test"}).status,403)
-        self.assertEqual(req.post(endpoint,data={"question":"а"*5000},headers={"Origin":"http://127.0.0.1:3000"}).status,413)
+        self.assertEqual(req.post(endpoint,data={"question":"а"*5000},headers={"Origin":ORIGIN}).status,413)
