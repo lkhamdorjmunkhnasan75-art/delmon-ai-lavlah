@@ -1,6 +1,6 @@
 # DELMON LAVLAH — MVP release readiness
 ## Decision: NO-GO for public production
-Baseline: T08.4 verified 89 distinct tests and backup/restore on 1a32bec. T08.5 adds eight security tests; target 97 distinct tests, CI pending. No public deployment authorized.
+Baseline: T08.4 verified 89 distinct tests and backup/restore on 1a32bec. T08.5 verified on 9616a1b: 97 distinct tests (53 unit/API, 33 database, 11 browser), all passed; Python CI 45605354317 and PostgreSQL CI 45605354315. All eight security tests and five authenticated chat browser tests passed. Backup/restore table data and selected ACL checks passed; npm audit reported zero vulnerabilities. Pilot scope complete; production remains NO-GO. No public deployment authorized.
 
 ## Implemented pilot controls
 - Synthetic shared access code from server environment, minimum 24 characters; constant-time comparison; random 256-bit session token, SHA-256 digest stored in process memory; 15-minute expiry and logout.
@@ -12,7 +12,7 @@ Baseline: T08.4 verified 89 distinct tests and backup/restore on 1a32bec. T08.5 
 ## Release blockers
 | Gate | Status |
 |---|---|
-| New security CI and backup/restore | Pending |
+| New security CI and backup/restore | Passed in disposable pilot CI |
 | Independent security review and stacked PR review | Pending |
 | Real identity provider, account lifecycle, tenant roles and revocation | Blocked |
 | Distributed rate limits and abuse/load testing | Blocked |
