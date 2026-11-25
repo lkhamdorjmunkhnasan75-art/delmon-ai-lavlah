@@ -15,7 +15,7 @@
 - [x] T07.4 Reliability hardening, concurrent workers, reconciliation, deadlines, domain groups, alerts and backup/restore. Verified on adb976d: 56 distinct tests; CI 45533637853 / 45533637911 passed; PostgreSQL 16.16 logical restore row and selected ACL checks passed. Offline only; multi-process/multi-host load, offsite encrypted backups and production monitoring remain gates.
 - [ ] T08 Pilot and security review.
 - [x] T08.1 Isolated synthetic Mongolian pilot directory fixtures and offline integration tests. Verified on 389a1cd: 64 distinct tests; CI 45538134957 / 45538135006 passed, including 8 pilot tests, scheduler and backup/restore. Disposable database only; separate production cluster/credentials remain release gates.
-- [ ] T08.2 Offline Mongolian question interpretation and grounded directory answers; Cyrillic and limited Latin aliases, clarification and no-result handling.
+- [x] T08.2 Offline Mongolian question interpretation and grounded directory answers; Cyrillic and limited Latin aliases, clarification and no-result handling. Verified on e78aedb: 74 distinct tests (37 unit/API, 31 database, 6 browser); Python CI 45548705909 and PostgreSQL CI 45548705868 passed, including all 10 QA tests and backup/restore. Pilot-only opt-in API; full language coverage, authentication, rate limits, production isolation and AI integration remain release gates.
 Start T01 and T02. Keep each change reviewable. Update task status only after verified tests. 
 
 Organization subscription: 300000 MNT/year; free basic listing; paid service includes catalog management, lead/RFQ intake and analytics. Do not imply unlimited AI usage. Subscription entitlement and expiry must be tested; no live billing without approval.
