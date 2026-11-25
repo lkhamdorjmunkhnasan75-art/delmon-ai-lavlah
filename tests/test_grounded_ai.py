@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 from lavlah.grounded_ai import respond, Selection
 from lavlah.public_api import app
+from tests_pilot_auth import pilot_auth
 from lavlah.pilot_fixtures import apply, RECORDS
 
 NOW=datetime(2026,1,1,tzinfo=timezone.utc)
@@ -58,7 +59,7 @@ class GroundedTests(unittest.TestCase):
         result=respond("Алтан нар",Mock(return_value=[row(1,secret="hidden")]),now=NOW)
         self.assertNotIn("secret",result["items"][0])
     def test_api_disabled_and_validation(self):
-        with TestClient(app) as client:
+        with TestClient(app) as client, pilot_auth(client):
             with patch.dict(os.environ,{"LAVLAH_ENABLE_PILOT_QA":"1","LAVLAH_ENABLE_MOCK_AI":"0"}):
                 self.assertEqual(client.post("/v1/pilot/grounded-ask",json={"question":"Алтан нар"}).status_code,404)
             with patch.dict(os.environ,{"LAVLAH_ENABLE_PILOT_QA":"1","LAVLAH_ENABLE_MOCK_AI":"1"}):
@@ -74,6 +75,9 @@ class GroundedIntegration(unittest.TestCase):
         flag.start()
         self.addCleanup(flag.stop)
         self.client=TestClient(app)
+        auth=pilot_auth(self.client)
+        auth.__enter__()
+        self.addCleanup(auth.__exit__,None,None,None)
         self.addCleanup(self.client.close)
     def test_grounded_api_and_usage_event(self):
         with self.assertLogs("lavlah.mock_usage",level="INFO") as logs:
