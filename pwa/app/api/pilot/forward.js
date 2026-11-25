@@ -2,7 +2,7 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 const reply=(body,status)=>Response.json(body,{status,headers});
 export async function forward(request,action){
  if(!["ask","login","logout"].includes(action))return reply({error:"Not found"},404);
- if(process.env.LAVLAH_ENABLE_PILOT_CHAT!=="1")return reply({error:"Not found"},404);
+ if(process.env.LAVLAH_ENV!=="pilot"||process.env.LAVLAH_PILOT_ONLY!=="1"||process.env.LAVLAH_ENABLE_PILOT_CHAT!=="1")return reply({error:"Not found"},404);
  // Next may reconstruct request.url with localhost rather than the incoming host.
  // Pin the trusted pilot browser origin explicitly; do not trust forwarded headers.
  const browserOrigin=process.env.PILOT_CHAT_ORIGIN||"http://127.0.0.1:3000";
