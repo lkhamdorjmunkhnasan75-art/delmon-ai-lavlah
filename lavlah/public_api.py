@@ -1,7 +1,9 @@
 """Read-only public directory API. No tenant identity is accepted here."""
 import os
 from contextlib import closing
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Response
+from pydantic import BaseModel, Field, ConfigDict
+from lavlah.mongolian_qa import answer as directory_answer
 import psycopg
 from psycopg.rows import dict_row
 
@@ -50,6 +52,23 @@ def directory(q: str = Query("", max_length=120),
               "source_url", "verified_at", "expires_at")
     return {"items": [{k: row[k] for k in fields} for row in rows],
             "limit": limit, "offset": offset}
+
+class PilotQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=1,max_length=240)
+
+@app.post("/v1/pilot/ask")
+def ask_pilot(body: PilotQuestion, response: Response):
+    # Explicit opt-in; no billing and no production exposure.
+    if os.environ.get("LAVLAH_ENABLE_PILOT_QA")!="1":
+        raise HTTPException(404,"Not found")
+    response.headers["Cache-Control"]="no-store"
+    try:
+        return directory_answer(body.question,search_directory)
+    except ValueError:
+        raise HTTPException(422,"Invalid question") from None
+    except (psycopg.Error,KeyError):
+        raise HTTPException(503,"Directory temporarily unavailable") from None
 
 # Serve the initial mobile UI on the same origin as the directory API.
 from pathlib import Path
