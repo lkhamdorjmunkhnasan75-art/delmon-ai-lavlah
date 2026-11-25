@@ -44,6 +44,11 @@ def permission(c,identifier):
         raise IngestionError("Invalid authorized public source URL")
     return row
 
+def strict_connection(c,login):
+    if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+        from lavlah.identity_store import check_connection
+        check_connection(c,login)
+
 def require_actor(c,permission_id,actor,capability):
     if os.getenv("LAVLAH_INGESTION_STRICT")!="1":
         if os.getenv("LAVLAH_ENV") in ("pilot","production"):
@@ -66,6 +71,7 @@ class Ingestion:
         prepared=[prepare(row) for row in records]
         with closing(psycopg.connect(self.dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                strict_connection(c,"lavlah_ingest_test")
                 c.execute("SET LOCAL ROLE lavlah_ingestion")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 permission(c,permission_id)
@@ -88,6 +94,7 @@ class Ingestion:
         if not evidence: raise IngestionError("Review evidence required")
         with closing(psycopg.connect(self.review_dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
+                strict_connection(c,"lavlah_review_test")
                 c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 row=c.execute("SELECT * FROM lavlah.ingestion_candidates WHERE id=%s",(candidate_id,)).fetchone()
