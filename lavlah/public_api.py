@@ -3,13 +3,80 @@ import os
 import logging
 from lavlah.grounded_ai import respond as grounded_answer
 from contextlib import closing
-from fastapi import FastAPI, Query, HTTPException, Response
+from fastapi import FastAPI, Query, HTTPException, Response, Request
+from fastapi.responses import JSONResponse
+from lavlah.pilot_security import enabled as pilot_enabled, security, event
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ConfigDict
 from lavlah.mongolian_qa import answer as directory_answer
 import psycopg
 from psycopg.rows import dict_row
 
 app = FastAPI(title="DELMON LAVLAH public directory")
+
+@app.middleware("http")
+async def pilot_guard(request: Request, call_next):
+    if not request.url.path.startswith("/v1/pilot/"):
+        return await call_next(request)
+    def reject(status,code):
+        event(code)
+        headers={"Cache-Control":"no-store"}
+        if status==429:headers["Retry-After"]="60"
+        return JSONResponse({"detail":code},status_code=status,headers=headers)
+    if not pilot_enabled():
+        return reject(404,"pilot_disabled")
+    if request.client is None or request.client.host not in ("127.0.0.1","::1","testclient"):
+        return reject(403,"pilot_loopback_required")
+    if request.method=="POST":
+        if request.headers.get("content-type","").split(";")[0].strip().lower()!="application/json":
+            return reject(415,"invalid_content_type")
+        # Bound actual streamed bytes rather than trusting Content-Length.
+        import asyncio
+        try:
+            async with asyncio.timeout(5):
+                chunks=[]
+                size=0
+                async for chunk in request.stream():
+                    size+=len(chunk)
+                    if size>4096:return reject(413,"body_too_large")
+                    chunks.append(chunk)
+                request._body=b"".join(chunks)
+        except TimeoutError:
+            return reject(408,"body_timeout")
+    if request.url.path=="/v1/pilot/login":
+        if not security.allow("login",10):
+            return reject(429,"login_rate_limited")
+    else:
+        token=request.headers.get("authorization","")
+        key=security.authorize(token[7:]) if token.startswith("Bearer ") else None
+        if not key:return reject(401,"session_required")
+        if request.url.path!="/v1/pilot/logout" and not security.allow("ask:"+key,20):
+            return reject(429,"request_rate_limited")
+    response=await call_next(request)
+    response.headers["Cache-Control"]="no-store"
+    if response.status_code>=500:event("pilot_backend_error")
+    return response
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc):
+    # Never echo raw input, including passwords and questions.
+    return JSONResponse({"detail":"Invalid input"},status_code=422,headers={"Cache-Control":"no-store"})
+
+class PilotLogin(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    password: str=Field(min_length=1,max_length=128)
+
+@app.post("/v1/pilot/login")
+def pilot_login(body: PilotLogin):
+    token=security.login(body.password)
+    if not token:raise HTTPException(401,"Invalid credentials")
+    return {"token":token,"expires_in":900}
+
+@app.post("/v1/pilot/logout")
+def pilot_logout(request: Request):
+    security.logout(request.headers["authorization"][7:])
+    return {"status":"logged_out"}
+
 SQL = """
 SELECT organization_id, name, category_slug, description, source_url,
        verified_at, expires_at

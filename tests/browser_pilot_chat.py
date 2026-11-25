@@ -14,6 +14,9 @@ class PilotChatBrowser(unittest.TestCase):
         self.page.goto(ORIGIN+"/")
         expect(self.page.locator("#category option[value=services]")).to_have_count(1)
         self.chat=self.page.get_by_role("region",name="DELMON чат")
+        self.chat.locator("#pilot-password").fill(os.environ["LAVLAH_PILOT_PASSWORD"])
+        self.chat.get_by_role("button",name="Нэвтрэх",exact=True).click()
+        expect(self.chat.locator("#pilot-question")).to_be_visible()
 
     def ask(self,q):
         self.chat.locator("#pilot-question").fill(q)
