@@ -11,7 +11,8 @@
 - [x] T07 Authorized structured ingestion and human review. Verified on 54c3fac: 37 distinct tests; CI 45433716426 / 45433716494 passed.
 - [x] T07.1 Scheduled local adapter, refresh candidates, exact cross-source deduplication and operational tests. Verified on 032c1c7: 41 distinct tests; CI 45444574453 / 45444574267 passed. No live scheduler activated.
 - [x] T07.2 Authorized HTTPS JSON adapter, endpoint registry, SSRF defense, per-permission rate limits and freshness evidence. Verified on 6cf48c8: 49 distinct tests; CI 45510618763 / 45510618749 passed, including mocked TLS and mid-fetch revocation. Offline transport only; production egress, aggregate rate limits, scheduler wiring, independent freshness verification and identity/security remain release gates.
-- [ ] T07.3 Integrated HTTPS scheduler, domain rate limits, bounded transport, recovery and monitoring.
+- [x] T07.3 Integrated HTTPS scheduler, exact-host rate limits, bounded transport, recovery and monitoring. Verified on 71906a1: 54 distinct tests; CI 45513848477 / 45513848562 passed. Offline only.
+- [ ] T07.4 Reliability hardening, concurrent workers, reconciliation, deadlines, domain groups, alerts and backup/restore.
 - [ ] T08 Pilot and security review.
 Start T01 and T02. Keep each change reviewable. Update task status only after verified tests. 
 
