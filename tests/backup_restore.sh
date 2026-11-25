@@ -2,12 +2,27 @@
 set -euo pipefail
 # Disposable CI server only. No production database access.
 [[ "${PGHOST:-}" == localhost && "${PGDATABASE:-}" == postgres && "${PGUSER:-}" == postgres ]]
+# Use the same PostgreSQL major version as the disposable service.
+server_version=$(psql -X -At -v ON_ERROR_STOP=1 -c 'SHOW server_version_num')
+major=$((server_version / 10000))
+[[ "$major" == 16 ]]
+# ubuntu-latest may ship a newer client. Use the service image's own tools.
+container_id=$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}')
+[[ "$container_id" =~ ^[a-f0-9]+$ ]]
+pg_dump() {
+  docker exec -e PGPASSWORD="$PGPASSWORD" "$container_id" pg_dump -h 127.0.0.1 -U "$PGUSER" -d "$PGDATABASE" "$@"
+}
+pg_restore() {
+  docker exec -i -e PGPASSWORD="$PGPASSWORD" "$container_id" pg_restore -h 127.0.0.1 -U "$PGUSER" "$@"
+}
+pg_dump --version
+pg_restore --version
 work=$(mktemp -d)
 target="lavlah_restore_${RANDOM}_$$"
 trap 'dropdb --if-exists "$target"; rm -rf "$work"' EXIT
-pg_dump --format=custom --schema=lavlah --file="$work/backup.dump"
+pg_dump --format=custom --schema=lavlah > "$work/backup.dump"
 createdb "$target"
-pg_restore --exit-on-error --dbname="$target" "$work/backup.dump"
+pg_restore --exit-on-error --dbname="$target" < "$work/backup.dump"
 psql -X -At -v ON_ERROR_STOP=1 -c "SELECT tablename FROM pg_tables WHERE schemaname='lavlah' ORDER BY tablename" > "$work/tables"
 while IFS= read -r table; do
   [[ "$table" =~ ^[a-z_]+$ ]]
