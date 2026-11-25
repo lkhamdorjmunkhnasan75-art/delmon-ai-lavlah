@@ -7,6 +7,7 @@ from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.responses import JSONResponse
 from lavlah.pilot_security import enabled as pilot_enabled, security, event
 from fastapi.exceptions import RequestValidationError
+from lavlah.identity_store import check_connection, checked_dsn, profile, revoke_token
 from pydantic import BaseModel, Field, ConfigDict
 from lavlah.mongolian_qa import answer as directory_answer
 import psycopg
@@ -43,7 +44,9 @@ async def pilot_guard(request: Request, call_next):
                 request._body=b"".join(chunks)
         except TimeoutError:
             return reject(408,"body_timeout")
-    if request.url.path=="/v1/pilot/login":
+    if request.url.path in ("/v1/pilot/identity/me","/v1/pilot/identity/revoke"):
+        if not security.allow("identity",120):return reject(429,"identity_rate_limited")
+    elif request.url.path=="/v1/pilot/login":
         if not security.allow("login",10):
             return reject(429,"login_rate_limited")
     else:
@@ -77,6 +80,24 @@ def pilot_logout(request: Request):
     security.logout(request.headers["authorization"][7:])
     return {"status":"logged_out"}
 
+def identity_bearer(request):
+    token=request.headers.get("authorization","")
+    if not token.startswith("Bearer "):raise HTTPException(401,"Identity required")
+    return token[7:]
+
+@app.get("/v1/pilot/identity/me")
+def identity_me(request: Request):
+    try:return profile(identity_bearer(request))
+    except ValueError:raise HTTPException(401,"Invalid identity") from None
+    except (psycopg.Error,KeyError):raise HTTPException(503,"Identity unavailable") from None
+
+@app.post("/v1/pilot/identity/revoke")
+def identity_revoke(request: Request):
+    try:revoke_token(identity_bearer(request))
+    except ValueError:raise HTTPException(401,"Invalid identity") from None
+    except (psycopg.Error,KeyError):raise HTTPException(503,"Identity unavailable") from None
+    return {"status":"revoked"}
+
 SQL = """
 SELECT organization_id, name, category_slug, description, source_url,
        verified_at, expires_at
@@ -89,11 +110,21 @@ LIMIT %s OFFSET %s
 
 def read_public(sql, params=()):
     # Dedicated server-side login must inherit only lavlah_public_reader.
-    with closing(psycopg.connect(os.environ["LAVLAH_PUBLIC_DSN"], row_factory=dict_row,
-                                 connect_timeout=5)) as conn:
+    mode=os.getenv("LAVLAH_ENV")
+    if mode=="production":
+        raise psycopg.OperationalError("Production not authorized")
+    pilot=mode=="pilot"
+    try:
+        dsn=checked_dsn("LAVLAH_PUBLIC_DSN","lavlah_integration_login") if pilot else os.environ["LAVLAH_PUBLIC_DSN"]
+    except ValueError:raise psycopg.OperationalError("Pilot configuration rejected") from None
+    options={"hostaddr":"127.0.0.1"} if pilot else {}
+    with closing(psycopg.connect(dsn, row_factory=dict_row,connect_timeout=5,**options)) as conn:
         with conn.transaction():
             conn.execute("SET TRANSACTION READ ONLY")
             conn.execute("SET LOCAL statement_timeout = '3s'")
+            if pilot:
+                try:check_connection(conn,"lavlah_integration_login")
+                except ValueError:raise psycopg.OperationalError("Pilot identity rejected") from None
             conn.execute("SET LOCAL ROLE lavlah_public_reader")
             return conn.execute(sql, params).fetchall()
 
