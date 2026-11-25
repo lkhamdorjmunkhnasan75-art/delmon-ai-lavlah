@@ -31,21 +31,18 @@ async def pilot_guard(request: Request, call_next):
         if request.headers.get("content-type","").split(";")[0].strip().lower()!="application/json":
             return reject(415,"invalid_content_type")
         # Bound actual streamed bytes rather than trusting Content-Length.
-        chunks=[]
-        size=0
-        async for chunk in request.stream():
-            size+=len(chunk)
-            if size>4096:return reject(413,"body_too_large")
-            chunks.append(chunk)
-        body=b"".join(chunks)
-        delivered=False
-        async def receive():
-            nonlocal delivered
-            if delivered:return {"type":"http.disconnect"}
-            delivered=True
-            return {"type":"http.request","body":body,"more_body":False}
-        request._receive=receive
-        request._body=body
+        import asyncio
+        try:
+            async with asyncio.timeout(5):
+                chunks=[]
+                size=0
+                async for chunk in request.stream():
+                    size+=len(chunk)
+                    if size>4096:return reject(413,"body_too_large")
+                    chunks.append(chunk)
+                request._body=b"".join(chunks)
+        except TimeoutError:
+            return reject(408,"body_timeout")
     if request.url.path=="/v1/pilot/login":
         if not security.allow("login",10):
             return reject(429,"login_rate_limited")
