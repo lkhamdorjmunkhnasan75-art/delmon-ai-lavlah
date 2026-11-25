@@ -1,0 +1,10 @@
+BEGIN;
+CREATE ROLE lavlah_identity NOLOGIN;
+GRANT USAGE ON SCHEMA lavlah TO lavlah_identity;
+CREATE TABLE lavlah.identity_revocations(jti uuid PRIMARY KEY, expires_at timestamptz NOT NULL);
+REVOKE ALL ON lavlah.identity_revocations FROM PUBLIC;
+GRANT SELECT,INSERT ON lavlah.identity_revocations TO lavlah_identity;
+GRANT SELECT(id,auth_subject) ON lavlah.users TO lavlah_identity;
+CREATE POLICY identity_subject_lookup ON lavlah.users FOR SELECT TO lavlah_identity USING (true);
+GRANT lavlah_request TO lavlah_identity;
+COMMIT;
