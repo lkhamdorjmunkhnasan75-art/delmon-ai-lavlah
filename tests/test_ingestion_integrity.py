@@ -12,7 +12,7 @@ from lavlah.authenticated_ingestion import AuthenticatedIngestion
 from lavlah.collection import LocalJSONAdapter
 from lavlah.https_adapter import public_addresses,collect_registered
 from lavlah.pilot_fixtures import apply,identifier
-from tests.test_identity_isolation import token,KEY
+from test_identity_isolation import token,KEY
 
 class IntegrityUnit(unittest.TestCase):
     def test_translation_addresses(self):
@@ -42,7 +42,7 @@ class IntegrityDB(unittest.TestCase):
         self.dsn=os.environ["LAVLAH_PILOT_DSN"]
         apply(self.dsn)
         self.pid=uuid4()
-        self.org=identifier(103)
+        self.org=identifier(102)
         self.actor=identifier(1)
         self.reviewer=identifier(2)
         self.sql("INSERT INTO lavlah.ingestion_permissions(id,organization_id,source_url,evidence,granted_by,valid_until,freshness_days) VALUES (%s,%s,'https://example.test/feed','synthetic',%s,now()+interval '2 days',1)",(self.pid,self.org,self.reviewer))
