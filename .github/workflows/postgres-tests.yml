@@ -212,5 +212,6 @@ jobs:
             curl --fail --silent http://127.0.0.1:$port/ >/dev/null
           done
           kill -0 "$api" "$ui"
-          curl --fail --silent -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d["status"]=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
+          set -o pipefail
+          curl --fail-with-body --silent --show-error -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
           timeout 120 python -B -m unittest discover -s tests -p browser_pilot_chat.py -v
