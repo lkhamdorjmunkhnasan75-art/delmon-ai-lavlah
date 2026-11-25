@@ -2,6 +2,7 @@
 import os
 import logging
 from lavlah.grounded_ai import respond as grounded_answer
+from lavlah import authenticated_chat as identity_chat
 from contextlib import closing
 from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.responses import JSONResponse
@@ -48,7 +49,7 @@ async def pilot_guard(request: Request, call_next):
                 request._body=b"".join(chunks)
         except TimeoutError:
             return reject(408,"body_timeout")
-    if request.url.path in ("/v1/pilot/identity/me","/v1/pilot/identity/revoke"):
+    if request.url.path.startswith("/v1/pilot/identity/"):
         if not security.allow("identity",120):return reject(429,"identity_rate_limited")
     elif request.url.path=="/v1/pilot/login":
         if not security.allow("login",10):
@@ -242,6 +243,30 @@ def grounded_ask(body: PilotQuestion, response: Response):
     # Numeric mock metrics only; never log question, source content or identifiers.
     logging.getLogger("lavlah.mock_usage").info("mock_usage %s",result["usage"])
     return result
+
+class ChatFeedback(BaseModel):
+    model_config=ConfigDict(extra="forbid",strict=True)
+    usage_id: str=Field(min_length=36,max_length=36)
+    rating: int=Field(ge=-1,le=1)
+
+def chat_gate():
+    if not identity_chat.enabled():raise HTTPException(404,"Not found")
+
+@app.post("/v1/pilot/identity/chat")
+def authenticated_ask(body: PilotQuestion,request: Request):
+    chat_gate()
+    try:return identity_chat.ask(identity_bearer(request),body.question,search_directory)
+    except identity_chat.ChatPrivacy:raise HTTPException(422,"Question rejected by privacy filter") from None
+    except identity_chat.ChatLimit:raise HTTPException(429,"Daily mock budget reached",headers={"Retry-After":"60"}) from None
+    except ValueError:raise HTTPException(401,"Invalid identity or question") from None
+    except (psycopg.Error,KeyError):raise HTTPException(503,"Chat unavailable") from None
+
+@app.post("/v1/pilot/identity/feedback")
+def authenticated_feedback(body: ChatFeedback,request: Request):
+    chat_gate()
+    try:return identity_chat.feedback(identity_bearer(request),body.usage_id,body.rating)
+    except ValueError:raise HTTPException(403,"Feedback unavailable") from None
+    except (psycopg.Error,KeyError):raise HTTPException(503,"Chat unavailable") from None
 
 # Serve the initial mobile UI on the same origin as the directory API.
 from pathlib import Path

@@ -2,11 +2,11 @@
 import re
 import unicodedata
 
-ALIASES={"altan nar":"алтан нар","hoh tenger":"хөх тэнгэр",
+ALIASES={"zaswariin":"засвар","zaswariig":"засвар","khukh tenger":"хөх тэнгэр","hurgeltiin":"хүргэлт","hudaldaanii":"худалдаа","altan nar":"алтан нар","hoh tenger":"хөх тэнгэр",
          "huh tenger":"хөх тэнгэр","zasvar":"засвар",
          "hudaldaa":"худалдаа","khudaldaa":"худалдаа",
          "surgalt":"сургалт","hurgelt":"хүргэлт","nogoon tal":"ногоон тал","tsagaan uul":"цагаан уул"}
-STOP={"хаана","байна","уу","вэ","юу","олох","хайх","хайж","өгөөч",
+STOP={"olch","olood","oloод","ugch","boloh","bolomjtoi","байгууллагын","компани","company","хаана","байна","уу","вэ","юу","олох","хайх","хайж","өгөөч",
       "байдаг","мэдээлэл","талаар","өгнө","үү","надад","хэрэгтэй",
       "haana","baina","ve","uu","haih","medeelel","байгаа","байдаг","хайгаад","хайгаач","хаанаас","тухай","hai","haanaas","heregtei","ugooch"}
 UNSUPPORTED={"үнэ","үнэтэй","утас","хаяг","цаг","дугаар","баталгаа",
