@@ -76,6 +76,8 @@ async def shared_limits(request: Request, call_next):
         if retry is not None:headers["Retry-After"]=str(retry)
         return JSONResponse({"detail":code},status_code=status,headers=headers)
     if os.getenv("LAVLAH_ENV")=="production":
+        if path.startswith("/v1/pilot/"):
+            return deny(404,"pilot_disabled")
         return deny(503,"production_disabled")
     if os.getenv("LAVLAH_ENABLE_SHARED_LIMITS")!="1":
         return await call_next(request)
