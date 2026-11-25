@@ -28,6 +28,12 @@ class PilotGuardTests(unittest.TestCase):
             c=Mock()
             c.execute.return_value.fetchone.return_value=row
             with self.assertRaises(ValueError): guard(c)
+        c=Mock()
+        c.execute.return_value.fetchone.return_value=("lavlah_pilot_test","172.18.0.2/32")
+        with patch.dict(os.environ,{"LAVLAH_PILOT_INTEGRATION":"1","LAVLAH_PILOT_CONTAINER_IP":"172.18.0.2"}):
+            guard(c)
+            c.execute.return_value.fetchone.return_value=("lavlah_pilot_test","172.18.0.3/32")
+            with self.assertRaises(ValueError): guard(c)
 
 @unittest.skipUnless(os.getenv("LAVLAH_PILOT_INTEGRATION")=="1","Disposable pilot DB required")
 class PilotIntegrationTests(unittest.TestCase):
