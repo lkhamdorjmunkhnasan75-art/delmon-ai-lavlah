@@ -80,3 +80,15 @@ class ChatQualityDB(unittest.TestCase):
         with patch("lavlah.authenticated_chat.DAILY_COUNT",2):
             with ThreadPoolExecutor(max_workers=4) as pool:
                 self.assertEqual(sum(pool.map(one,range(4))),2)
+
+    def test_numeric_cost_cap(self):
+        from lavlah.authenticated_chat import DAILY_BUDGET,MAX_RESERVATION
+        from lavlah.pilot_fixtures import identifier
+        from uuid import uuid4
+        with psycopg.connect(self.dsn) as c:
+            for cost in (70000,60001):
+                c.execute("INSERT INTO lavlah.chat_usage(id,user_id,outcome,estimated_micro_mnt) VALUES (%s,%s,'matched',%s)",(uuid4(),identifier(1),cost))
+        search=Mock()
+        with self.assertRaises(ChatLimit):ask(token(),"Алтан нар",search)
+        search.assert_not_called()
+        self.assertEqual(self.post("chat",{"question":"Алтан нар"},token(sub="synthetic-pilot-2")).status_code,200)

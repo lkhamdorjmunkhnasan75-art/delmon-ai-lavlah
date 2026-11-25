@@ -15,8 +15,17 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install -r requirements-public.txt
+      - run: pip check
+      - name: Audit Python dependencies
+        run: |
+          python -m pip freeze > /tmp/lavlah-resolved.txt
+          python -m venv /tmp/lavlah-audit
+          /tmp/lavlah-audit/bin/pip install pip-audit
+          /tmp/lavlah-audit/bin/pip-audit -r /tmp/lavlah-resolved.txt --no-deps --disable-pip
       - run: python -B -m unittest discover -s tests -v

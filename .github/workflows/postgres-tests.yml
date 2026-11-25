@@ -32,6 +32,8 @@ jobs:
       PGDATABASE: postgres
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Check migration, access policies, and rollback
         run: |
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/001_directory.sql
@@ -51,6 +53,13 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-public.txt
+      - run: pip check
+      - name: Audit Python dependencies
+        run: |
+          python -m pip freeze > /tmp/lavlah-resolved.txt
+          python -m venv /tmp/lavlah-audit
+          /tmp/lavlah-audit/bin/pip install pip-audit
+          /tmp/lavlah-audit/bin/pip-audit -r /tmp/lavlah-resolved.txt --no-deps --disable-pip
       - name: Provision disposable restricted API login
         run: |
           psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE lavlah_integration_login LOGIN PASSWORD 'ci-only-password' NOSUPERUSER NOCREATEDB NOCREATEROLE"
@@ -208,7 +217,9 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.sql
       - name: Backup and restore disposable database
-        run: bash tests/backup_restore.sh
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery_seed.sql
+          bash tests/backup_restore.sh
       - name: Isolated synthetic pilot database
         env:
           LAVLAH_PILOT_ONLY: '1'
@@ -239,6 +250,7 @@ jobs:
           python -B -m unittest discover -s tests -p test_chat_quality.py -v
           python -m lavlah.pilot_fixtures seed
           export LAVLAH_ENV=pilot LAVLAH_PILOT_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+          export LAVLAH_SYNTHETIC_KEY=$(python -c 'print((b"x"*32).hex())') LAVLAH_ENABLE_IDENTITY_CHAT=1
           export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
           python -m uvicorn lavlah.public_api:app --host 127.0.0.1 --port 8001 --no-proxy-headers --no-access-log > /tmp/pilot-api.log 2>&1 &
           api=$!
@@ -258,3 +270,4 @@ jobs:
           curl --fail-with-body --silent --show-error -H "Authorization: Bearer $token" -H 'Origin: http://127.0.0.1:3001' -H 'Content-Type: application/json' -d '{"question":"Altan nar zasvar"}' http://127.0.0.1:3001/api/pilot/ask | python -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="matched" and d["items"][0]["source_url"]=="https://pilot.example.test/0"'
           unset token
           timeout 120 python -B -m unittest discover -s tests -p browser_pilot_chat.py -v
+          timeout 120 python -B -m unittest discover -s tests -p browser_identity_chat.py -v
