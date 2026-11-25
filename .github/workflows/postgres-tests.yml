@@ -202,6 +202,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/013_billing_integrity.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/013_billing_integrity.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/013_billing_integrity.sql
+      - name: Chat quality migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.sql
       - name: Backup and restore disposable database
         run: bash tests/backup_restore.sh
       - name: Isolated synthetic pilot database
@@ -231,6 +236,7 @@ jobs:
           python -B -m unittest discover -s tests -p test_ingestion_integrity.py -v
           export LAVLAH_BILLING_DSN=postgresql://lavlah_billing_test:ci-billing-only@127.0.0.1:5432/lavlah_pilot_test
           python -B -m unittest discover -s tests -p test_billing_integrity.py -v
+          python -B -m unittest discover -s tests -p test_chat_quality.py -v
           python -m lavlah.pilot_fixtures seed
           export LAVLAH_ENV=pilot LAVLAH_PILOT_PASSWORD=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
           export LAVLAH_ENABLE_PILOT_QA=1 LAVLAH_ENABLE_MOCK_AI=1 LAVLAH_ENABLE_PILOT_CHAT=1 LAVLAH_API_ORIGIN=http://127.0.0.1:8001 PILOT_CHAT_ORIGIN=http://127.0.0.1:3001
