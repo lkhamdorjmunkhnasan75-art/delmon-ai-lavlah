@@ -3,7 +3,13 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 const reply=(body,status)=>Response.json(body,{status,headers});
 export async function POST(request){
  if(process.env.LAVLAH_ENABLE_PILOT_CHAT!=="1")return reply({error:"Not found"},404);
- if(request.headers.get("origin")!==new URL(request.url).origin)return reply({error:"Forbidden"},403);
+ // Next may reconstruct request.url with localhost rather than the incoming host.
+ // Pin the trusted pilot browser origin explicitly; do not trust forwarded headers.
+ const browserOrigin=process.env.PILOT_CHAT_ORIGIN||"http://127.0.0.1:3000";
+ let expected;
+ try{expected=new URL(browserOrigin);}catch{return reply({error:"Unavailable"},503);}
+ if(expected.protocol!=="http:"||expected.hostname!=="127.0.0.1"||expected.origin!==browserOrigin)return reply({error:"Unavailable"},503);
+ if(request.headers.get("origin")!==expected.origin||request.headers.get("host")!==expected.host)return reply({error:"Forbidden"},403);
  if(!/^application\/json(?:;|$)/i.test(request.headers.get("content-type")||""))return reply({error:"Invalid input"},415);
  try{
   const reader=request.body?.getReader();if(!reader)return reply({error:"Invalid input"},400);
