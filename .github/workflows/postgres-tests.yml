@@ -227,6 +227,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/016_db_boundary.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/016_db_boundary.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/016_db_boundary.sql
+      - name: Atomic review migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/017_atomic_review.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/017_atomic_review.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/017_atomic_review.sql
       - name: Backup and restore disposable database
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery_seed.sql

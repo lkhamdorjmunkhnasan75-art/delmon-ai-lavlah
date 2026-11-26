@@ -212,3 +212,46 @@ class IntegrityDB(unittest.TestCase):
             self.assertTrue(definer)
             self.assertIn("search_path=pg_catalog",config)
             self.assertFalse(owner_member or request_exec or public_exec,name)
+
+    def test_direct_forged_review_and_audit_denied(self):
+        candidate=self.submit("fresh")
+        for query,args in (
+            ("INSERT INTO lavlah.ingestion_reviews(candidate_id,reviewer_id,decision,evidence) VALUES (%s,%s,'rejected','forged')",(candidate,self.reviewer)),
+            ("INSERT INTO lavlah.publication_audit(candidate_id,permission_id,organization_id,reviewer_id,digest,observed_at,decision) SELECT id,permission_id,%s,%s,digest,observed_at,'rejected' FROM lavlah.ingestion_candidates WHERE id=%s",(self.org,self.reviewer,candidate)),
+            ("INSERT INTO lavlah.sources(organization_id,submitted_by,source_url,authorization_reference) VALUES (%s,%s,'https://example.test/fake','forged')",(self.org,self.actor)),
+        ):
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as c:
+                    c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                    c.execute(query,args)
+        self.assertEqual(self.review(candidate)["decision"],"approved")
+
+    def test_atomic_function_denies_wrong_actor(self):
+        candidate=self.submit("fresh")
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as c:
+                c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                c.execute("SELECT lavlah.atomic_review(%s,%s,true,'forged')",(candidate,self.actor))
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[])
+
+    def test_atomic_rejection_and_duplicate(self):
+        candidate=self.submit("fresh")
+        result=self.s.review(token(sub="synthetic-pilot-2"),candidate,approve=False,evidence="checked")
+        self.assertEqual(result,{"decision":"rejected","source_id":None})
+        self.assertEqual(self.sql("SELECT decision,source_id FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[("rejected",None)])
+        with self.assertRaises(IngestionError):self.review(candidate)
+
+    def test_atomic_owner_and_acl(self):
+        rows=self.sql("""SELECT r.rolname,r.rolcanlogin,r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,
+          p.prosecdef,p.proconfig,pg_has_role('lavlah_ingestion_reviewer',r.oid,'MEMBER'),
+          has_function_privilege('lavlah_request',p.oid,'EXECUTE'),
+          has_schema_privilege(r.oid,'lavlah','CREATE'),
+          EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
+          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner
+          WHERE n.nspname='lavlah' AND p.proname='atomic_review'""")
+        self.assertEqual(len(rows),1)
+        name,login,superuser,bypass,createrole,createdb,definer,config,member,request_exec,create,public_exec=rows[0]
+        self.assertEqual(name,"lavlah_publication_owner")
+        self.assertTrue(definer)
+        self.assertIn("search_path=pg_catalog",config)
+        self.assertFalse(any((login,superuser,bypass,createrole,createdb,member,request_exec,create,public_exec)))
