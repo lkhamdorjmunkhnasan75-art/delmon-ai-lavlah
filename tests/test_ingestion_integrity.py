@@ -170,3 +170,45 @@ class IntegrityDB(unittest.TestCase):
                     # Admin commits before the pending lock acquisition may succeed.
                 with self.assertRaises(IngestionError):future.result(timeout=8)
         self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[])
+
+    def test_permission_expires_during_review(self):
+        from lavlah.ingestion import require_actor
+        candidate=self.submit("fresh")
+        self.sql("UPDATE lavlah.ingestion_permissions SET valid_until=clock_timestamp()+interval '1 second' WHERE id=%s",(self.pid,))
+        def expire(c,pid,actor,capability):
+            require_actor(c,pid,actor,capability)
+            c.execute("SELECT pg_sleep(1.1)")
+        with patch("lavlah.ingestion.require_actor",side_effect=expire):
+            with self.assertRaises((IngestionError,psycopg.errors.InsufficientPrivilege)):self.review(candidate)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.ingestion_reviews WHERE candidate_id=%s",(candidate,)),[])
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[])
+
+    def test_direct_publication_without_review_denied(self):
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as c:
+                c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                c.execute("UPDATE lavlah.public_listings SET name='forged' WHERE organization_id=%s",(identifier(100),))
+        candidate=self.submit("fresh")
+        self.assertEqual(self.review(candidate)["decision"],"approved")
+
+    def test_direct_audit_recorded_at_denied(self):
+        candidate=self.submit("fresh")
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as c:
+                c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                c.execute("""INSERT INTO lavlah.publication_audit(candidate_id,permission_id,organization_id,reviewer_id,digest,observed_at,decision,recorded_at)
+                SELECT id,permission_id,%s,%s,digest,observed_at,'rejected',now() FROM lavlah.ingestion_candidates WHERE id=%s""",(self.org,self.reviewer,candidate))
+        self.assertEqual(self.review(candidate)["decision"],"approved")
+
+    def test_definer_catalog_permissions(self):
+        rows=self.sql("""SELECT p.proname,p.prosecdef,p.proconfig,
+          pg_has_role('lavlah_request',p.proowner,'MEMBER'),
+          has_function_privilege('lavlah_request',p.oid,'EXECUTE'),
+          EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE')
+          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+          WHERE n.nspname='lavlah' AND p.proname IN ('lock_memberships','lock_active_permission','lock_actor_grant')""")
+        self.assertEqual(len(rows),3)
+        for name,definer,config,owner_member,request_exec,public_exec in rows:
+            self.assertTrue(definer)
+            self.assertIn("search_path=pg_catalog",config)
+            self.assertFalse(owner_member or request_exec or public_exec,name)
