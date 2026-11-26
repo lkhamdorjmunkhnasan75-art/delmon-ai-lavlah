@@ -13,6 +13,8 @@ def check_connection(c,login):
         (SELECT rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname=session_user) AS privileged""").fetchone()
     if row["db"]!="lavlah_pilot_test" or row["login"]!=login or row["marker"]!="yes" or row["privileged"] is not False:
         raise ValueError("Pilot database identity mismatch")
+    if not row["addr"]:
+        raise ValueError("Pilot TCP server required")
     actual=ipaddress.ip_interface(row["addr"]).ip
     if not actual.is_loopback:
         private=any(actual in ipaddress.ip_network(net) for net in ("10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"))
@@ -22,11 +24,16 @@ def check_connection(c,login):
 def checked_dsn(name,login):
     if os.getenv("LAVLAH_ENV")!="pilot" or os.getenv("LAVLAH_PILOT_ONLY")!="1":
         raise ValueError("Pilot disabled")
-    dsn=os.environ[name]
-    opts=conninfo_to_dict(dsn)
+    try:
+        dsn=os.environ[name]
+        opts=conninfo_to_dict(dsn)
+    except (KeyError, ValueError, psycopg.Error):
+        raise ValueError("Invalid pilot database configuration") from None
     if opts.get("host")!="127.0.0.1" or opts.get("dbname")!="lavlah_pilot_test" or opts.get("user")!=login or set(opts)-{"host","port","dbname","user","password","sslmode"}:
         raise ValueError("Pilot DSN mismatch")
-    if any(os.getenv(k) for k in ("PGHOSTADDR","PGSERVICE","PGSERVICEFILE","PGOPTIONS")):
+    if opts.get("port", "5432") != "5432" or opts.get("sslmode", "prefer") not in ("disable", "prefer", "require", "verify-ca", "verify-full"):
+        raise ValueError("Unexpected pilot connection option")
+    if any(k in os.environ for k in ("PGHOSTADDR","PGSERVICE","PGSERVICEFILE","PGOPTIONS","PGPORT","PGTARGETSESSIONATTRS","PGLOADBALANCEHOSTS")):
         raise ValueError("Unexpected database environment")
     return dsn
 
@@ -34,7 +41,7 @@ def checked_dsn(name,login):
 def identity_transaction(token,*,revoke=False):
     claims=validate(token,configured_key())
     dsn=checked_dsn("LAVLAH_IDENTITY_DSN","lavlah_identity_login")
-    with closing(psycopg.connect(dsn,hostaddr="127.0.0.1",connect_timeout=5,row_factory=dict_row)) as c:
+    with closing(psycopg.connect(dsn,hostaddr="127.0.0.1",port=5432,connect_timeout=5,row_factory=dict_row)) as c:
         with c.transaction():
             c.execute("SET LOCAL statement_timeout='3s'")
             check_connection(c,"lavlah_identity_login")
