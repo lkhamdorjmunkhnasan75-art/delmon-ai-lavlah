@@ -1,0 +1,3 @@
+-r requirements-public.txt
+playwright
+pip-audit

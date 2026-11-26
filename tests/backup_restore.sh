@@ -7,7 +7,7 @@ server_version=$(psql -X -At -v ON_ERROR_STOP=1 -c 'SHOW server_version_num')
 major=$((server_version / 10000))
 [[ "$major" == 16 ]]
 # ubuntu-latest may ship a newer client. Use the service image's own tools.
-container_id=$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}')
+container_id=$(bash tests/ci_postgres_container.sh)
 [[ "$container_id" =~ ^[a-f0-9]+$ ]]
 pg_dump() {
   docker exec -e PGPASSWORD="$PGPASSWORD" "$container_id" pg_dump -h 127.0.0.1 -U "$PGUSER" -d "$PGDATABASE" "$@"
