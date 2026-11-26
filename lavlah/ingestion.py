@@ -87,6 +87,8 @@ class Ingestion:
                         ON CONFLICT(permission_id,digest,observation_day) DO NOTHING RETURNING id""",
                         (permission_id,actor,row["name"],row["category_slug"],row["description"],digest)).fetchone()
                     results.append({"id":str(inserted["id"]) if inserted else None,"duplicate":inserted is None})
+                if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+                    permission(c,permission_id)
                 return results
 
     def review(self,candidate_id,reviewer,*,approve,evidence):
@@ -122,6 +124,9 @@ class Ingestion:
                          grant["valid_until"],row["observed_at"],grant["freshness_days"],grant["valid_until"],row["observed_at"],grant["freshness_days"])).fetchone()
                     if not source: raise IngestionError("Candidate expired; collect fresh evidence")
                     source=source["id"]
+                c.execute("""INSERT INTO lavlah.ingestion_reviews(candidate_id,reviewer_id,decision,evidence,source_id)
+                    VALUES (%s,%s,%s,%s,%s)""",(candidate_id,reviewer,"approved" if approve else "rejected",evidence,source))
+                if approve:
                     c.execute("""INSERT INTO lavlah.public_listings
                         (organization_id,source_id,name,category_slug,description,public_source_url)
                         VALUES (%s,%s,%s,%s,%s,%s)
@@ -129,9 +134,9 @@ class Ingestion:
                         category_slug=excluded.category_slug,description=excluded.description,
                         public_source_url=excluded.public_source_url,approved_at=now()""",
                         (grant["organization_id"],source,row["name"],row["category_slug"],row["description"],grant["source_url"]))
-                c.execute("""INSERT INTO lavlah.ingestion_reviews(candidate_id,reviewer_id,decision,evidence,source_id)
-                    VALUES (%s,%s,%s,%s,%s)""",(candidate_id,reviewer,"approved" if approve else "rejected",evidence,source))
                 if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
                     c.execute("""INSERT INTO lavlah.publication_audit(candidate_id,permission_id,organization_id,reviewer_id,digest,observed_at,decision,source_id)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",(candidate_id,row["permission_id"],grant["organization_id"],reviewer,row["digest"],row["observed_at"],"approved" if approve else "rejected",source))
+                if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+                    permission(c,row["permission_id"])
                 return {"decision":"approved" if approve else "rejected","source_id":str(source) if source else None}

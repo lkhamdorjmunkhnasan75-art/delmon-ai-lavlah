@@ -57,6 +57,7 @@ def identity_transaction(token,*,revoke=False):
                 c.execute("INSERT INTO lavlah.identity_revocations VALUES (%s,to_timestamp(%s))",(claims["jti"],claims["exp"]))
                 yield None
             else:
+                c.execute("SELECT lavlah.lock_memberships(%s)",(user["id"],))
                 c.execute("SET LOCAL ROLE lavlah_request")
                 c.execute("SELECT set_config('lavlah.user_id',%s,true)",(str(user["id"]),))
                 yield c
