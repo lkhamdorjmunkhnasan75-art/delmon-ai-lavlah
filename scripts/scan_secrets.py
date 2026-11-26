@@ -13,9 +13,23 @@ RULES={
 }
 def git(*args):
     return subprocess.check_output(["git",*args],stderr=subprocess.DEVNULL)
-def inspect(data,counts):
+def inspect(data,counts,location):
     for rule,pattern in RULES.items():
-        if pattern.search(data):counts[rule]+=1
+        matches=list(pattern.finditer(data))
+        if not matches:continue
+        counts[rule]+=1
+        # Location is a tracked path fingerprint or blob ID; never print matched text.
+        if rule=="credential_url":
+            from urllib.parse import urlsplit
+            categories=set()
+            for m in matches:
+                try:
+                    u=urlsplit(m.group().decode("ascii"))
+                    host=u.hostname or ""
+                    categories.add("reserved-test-host" if host.endswith(".test") or host in ("localhost","127.0.0.1","::1") else "other-or-unknown-host")
+                except (ValueError,UnicodeError):
+                    categories.add("unparseable")
+            print("Credential URL candidate:",location,"classification:",",".join(sorted(categories)),"matches:",len(matches))
 def main():
     if git("rev-parse","--is-shallow-repository").strip()!=b"false":
         raise SystemExit("Full reachable history required")
@@ -25,7 +39,7 @@ def main():
         if not name:continue
         p=Path(name.decode("utf-8",errors="surrogateescape"))
         if p.is_symlink() or not p.is_file():raise SystemExit("Unscannable tracked path")
-        inspect(p.read_bytes(),counts)
+        inspect(p.read_bytes(),counts,'tracked path sha256='+__import__('hashlib').sha256(name).hexdigest())
         tracked+=1
     print("Tracked files scanned:",tracked,"pattern counts:",counts)
     history={k:0 for k in RULES}
@@ -34,7 +48,7 @@ def main():
     ids=sorted({line.split(b" ",1)[0].decode("ascii") for line in objects})
     for oid in ids:
         if git("cat-file","-t",oid).strip()!=b"blob":continue
-        inspect(git("cat-file","blob",oid),history)
+        inspect(git("cat-file","blob",oid),history,"historical blob="+oid)
         blobs+=1
     print("Reachable historical blobs scanned:",blobs,"pattern counts:",history)
     return int(any(counts.values()) or any(history.values()))
