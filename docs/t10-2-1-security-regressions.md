@@ -1,0 +1,10 @@
+# T10.2.1 Security regression coverage
+Base: 3051422 (PR 25). Last verified executable baseline 4a397f3: 142 distinct tests. Target: 155 (89 unit/API, 54 DB, 12 browser). CI pending.
+
+New tests use temporary local Git repositories and a fake Docker executable, never a real credential, provider or Docker daemon. Scanner checks five pattern types, clean content, reserved and other host classifications without exceptions, redacted output, tracked uncommitted content, deleted historical content, another reachable ref and shallow-clone denial. Container selector checks single matching container, wrong CI/DB context, wrong digest, missing/multiple containers, malformed/mismatching image IDs. Existing scanner, gate, selector and 142 tests unchanged.
+
+## Existing finding provenance
+PR 25 evidence on 4a397f3: one tracked file and two historical blobs matched a credential URL. Both historical blobs (30c1cddf74b553e5922797e025c64f36ad33f7a9 and dc0cf3dce5e56776ed1ba7ee68a02540f60972cd) contain the same negative fixture in tests/test_grounded_ai.py, test_filter_invalid_evidence. The current file matched the second blob at review. Mock selection is not called and no_result is required. This proves negative-fixture intent within the test, not absence of reuse elsewhere. No raw value disclosed, no exception or blanket allowlist. New test credentials are constructed in memory and committed only to disposable temporary Git repositories, then removed. No history rewrite. Release remains blocked on unresolved candidate disposition.
+
+## Limits
+Pattern tests do not prove detection of every credential format, entropy-based secret or unfetched/unreachable history. Fake Docker tests do not replace real pinned-image integration. Independent reviewer must verify exact fixture provenance and any external reuse with the authorized credential owner; if real, rotate/revoke and assess remediation. A12 remains open; production NO-GO. No main change, merge, deployment, real AI API, live business sources or payment.
