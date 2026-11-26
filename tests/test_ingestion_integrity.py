@@ -101,3 +101,72 @@ class IntegrityDB(unittest.TestCase):
         self.sql("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(self.pid,))
         self.assertEqual(self.sql("SELECT name FROM lavlah.public_directory WHERE organization_id=%s",(self.org,)),[])
         with self.assertRaises(IngestionError):self.submit("other")
+
+    def test_reviewer_grant_revoked(self):
+        candidate=self.submit("fresh")
+        self.sql("DELETE FROM lavlah.ingestion_actor_grants WHERE permission_id=%s AND user_id=%s",(self.pid,self.reviewer))
+        with self.assertRaises(IngestionError):self.review(candidate)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[])
+
+    def test_direct_reviewer_timestamp_denied(self):
+        candidate=self.submit("fresh")
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as c:
+                c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                c.execute("INSERT INTO lavlah.ingestion_reviews(candidate_id,reviewer_id,decision,evidence,reviewed_at) VALUES (%s,%s,'rejected','synthetic',now())",(candidate,self.reviewer))
+        self.review(candidate)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[("approved",)])
+
+    def test_request_role_cannot_lock_grants(self):
+        from lavlah.identity_store import identity_transaction
+        with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+            with identity_transaction(token()) as c:
+                c.execute("SELECT lavlah.lock_actor_grant(%s,%s,'review')",(self.pid,self.reviewer))
+
+    def test_admin_revocation_serializes_with_review(self):
+        from threading import Event
+        from lavlah.ingestion import require_actor
+        candidate=self.submit("fresh")
+        authorized=Event()
+        release=Event()
+        def hold(c,pid,actor,capability):
+            require_actor(c,pid,actor,capability)
+            if capability=="review":
+                authorized.set()
+                if not release.wait(4):raise RuntimeError("test synchronization timeout")
+        with patch("lavlah.ingestion.require_actor",side_effect=hold):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future=pool.submit(self.review,candidate)
+                try:
+                    self.assertTrue(authorized.wait(3))
+                    for sql,args in (
+                        ("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(self.pid,)),
+                        ("DELETE FROM lavlah.ingestion_actor_grants WHERE permission_id=%s AND user_id=%s",(self.pid,self.reviewer)),
+                    ):
+                        with self.assertRaises(psycopg.errors.LockNotAvailable):
+                            with psycopg.connect(self.dsn) as c:
+                                c.execute("SET LOCAL lock_timeout='150ms'")
+                                c.execute(sql,args)
+                finally:
+                    release.set()
+                self.assertEqual(future.result(timeout=8)["decision"],"approved")
+        self.sql("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(self.pid,))
+        self.assertEqual(self.sql("SELECT name FROM lavlah.public_directory WHERE organization_id=%s",(self.org,)),[])
+
+    def test_admin_first_revocation_blocks_waiting_review(self):
+        from threading import Event
+        from lavlah.ingestion import permission
+        candidate=self.submit("fresh")
+        entered=Event()
+        def entering(c,pid):
+            entered.set()
+            return permission(c,pid)
+        with patch("lavlah.ingestion.permission",side_effect=entering):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                with psycopg.connect(self.dsn) as admin:
+                    admin.execute("UPDATE lavlah.ingestion_permissions SET revoked=true WHERE id=%s",(self.pid,))
+                    future=pool.submit(self.review,candidate)
+                    self.assertTrue(entered.wait(3))
+                    # Admin commits before the pending lock acquisition may succeed.
+                with self.assertRaises(IngestionError):future.result(timeout=8)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",(candidate,)),[])
