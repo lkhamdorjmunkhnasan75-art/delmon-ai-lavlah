@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 25
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
         env:
           POSTGRES_PASSWORD: local-test
         ports:
@@ -26,6 +26,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
+      LAVLAH_POSTGRES_IMAGE: postgres:16@sha256:07abc3f43c9395b0bdbbab36bc25ddb0e8d83cd4fcafb5fb7d6abe14ff156dd8
       PGHOST: localhost
       PGUSER: postgres
       PGPASSWORD: local-test
@@ -229,7 +230,8 @@ jobs:
         run: |
           createdb lavlah_pilot_test
           trap 'dropdb --if-exists lavlah_pilot_test' EXIT
-          service=$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}')
+          service=$(bash tests/ci_postgres_container.sh)
+          [[ "$service" =~ ^[a-f0-9]+$ ]]
           docker exec -e PGPASSWORD="$PGPASSWORD" "$service" pg_dump -h 127.0.0.1 -U postgres --schema-only --schema=lavlah postgres > /tmp/lavlah-pilot-schema.sql
           psql -X -v ON_ERROR_STOP=1 -d lavlah_pilot_test -f /tmp/lavlah-pilot-schema.sql
           psql -X -v ON_ERROR_STOP=1 -c "ALTER DATABASE lavlah_pilot_test SET lavlah.pilot_only='yes'"
