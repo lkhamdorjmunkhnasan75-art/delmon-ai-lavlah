@@ -93,3 +93,32 @@ class TenantBoundaryDB(unittest.TestCase):
         with self.assertRaises(psycopg.errors.InsufficientPrivilege):
             with identity_transaction(token()) as c:
                 c.execute("INSERT INTO lavlah.memberships VALUES (%s,%s,'owner')",(identifier(1),identifier(101)))
+
+    def test_membership_revocation_waits_for_transaction(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        import time
+        started=Event()
+        pids=[]
+        def revoke():
+            with psycopg.connect(self.dsn) as admin:
+                admin.execute("SET LOCAL statement_timeout='5s'")
+                pids.append(admin.info.backend_pid)
+                started.set()
+                admin.execute("DELETE FROM lavlah.memberships WHERE user_id=%s AND organization_id=%s",(identifier(1),identifier(100)))
+        t=token()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with identity_transaction(t) as c:
+                future=pool.submit(revoke)
+                self.assertTrue(started.wait(2))
+                with psycopg.connect(self.dsn,autocommit=True) as observer:
+                    deadline=time.monotonic()+2
+                    while time.monotonic()<deadline:
+                        blockers=observer.execute("SELECT pg_blocking_pids(%s)",(pids[0],)).fetchone()[0]
+                        if c.info.backend_pid in blockers:break
+                        time.sleep(.02)
+                    else:self.fail("Expected actual membership lock wait")
+                self.assertEqual(c.execute("SELECT id FROM lavlah.organizations").fetchone()["id"],identifier(100))
+            future.result(timeout=6)
+        with identity_transaction(t) as c:
+            self.assertEqual(c.execute("SELECT id FROM lavlah.organizations").fetchall(),[])
