@@ -35,6 +35,9 @@ def prepare(record):
 def permission(c,identifier):
     # Serialize permission changes and all ingestions/reviews for a permission.
     c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,7))",(str(identifier),))
+    if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
+        if not c.execute("SELECT lavlah.lock_active_permission(%s) AS allowed",(identifier,)).fetchone()["allowed"]:
+            raise IngestionError("Active source permission required")
     row=c.execute("""SELECT * FROM lavlah.ingestion_permissions
         WHERE id=%s AND NOT revoked AND valid_until>clock_timestamp()""",(identifier,)).fetchone()
     if not row:
@@ -56,7 +59,7 @@ def require_actor(c,permission_id,actor,capability):
         return
     if os.getenv("LAVLAH_ENV")!="pilot" or os.getenv("LAVLAH_PILOT_ONLY")!="1":
         raise IngestionError("Strict pilot required")
-    if not c.execute("SELECT 1 FROM lavlah.ingestion_actor_grants WHERE permission_id=%s AND user_id=%s AND capability=%s",(permission_id,actor,capability)).fetchone():
+    if not c.execute("SELECT lavlah.lock_actor_grant(%s,%s,%s) AS allowed",(permission_id,actor,capability)).fetchone()["allowed"]:
         raise IngestionError("Actor not authorized")
 
 class Ingestion:
