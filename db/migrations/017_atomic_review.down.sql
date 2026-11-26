@@ -1,0 +1,10 @@
+BEGIN;
+DROP FUNCTION lavlah.atomic_review(uuid,uuid,boolean,text);
+DROP POLICY atomic_review_sources ON lavlah.sources;
+DROP OWNED BY lavlah_publication_owner;
+DROP ROLE lavlah_publication_owner;
+GRANT INSERT ON lavlah.sources TO lavlah_ingestion_reviewer;
+GRANT INSERT,UPDATE ON lavlah.public_listings TO lavlah_ingestion_reviewer;
+GRANT INSERT(candidate_id,reviewer_id,decision,evidence,source_id) ON lavlah.ingestion_reviews TO lavlah_ingestion_reviewer;
+GRANT INSERT(candidate_id,permission_id,organization_id,reviewer_id,digest,observed_at,decision,source_id) ON lavlah.publication_audit TO lavlah_ingestion_reviewer;
+COMMIT;
