@@ -217,6 +217,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/014_chat_quality.sql
+      - name: Ingestion authorization migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/015_ingestion_authorization.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/015_ingestion_authorization.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/015_ingestion_authorization.sql
       - name: Backup and restore disposable database
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery_seed.sql
