@@ -31,7 +31,7 @@ jobs:
       PGPASSWORD: local-test
       PGDATABASE: postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
       - name: Check migration, access policies, and rollback
@@ -49,7 +49,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/003_public_category_names.sql
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
       - run: pip install -r requirements-public.txt
@@ -87,7 +87,7 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8000/ >/dev/null
           python -m unittest discover -s tests -p browser_ui.py -v
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
       - name: Build Next PWA and audit dependencies
