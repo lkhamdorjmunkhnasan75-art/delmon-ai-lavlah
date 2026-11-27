@@ -1,5 +1,6 @@
 """Offline security regression tests. Never contact a provider or real Docker daemon."""
 import contextlib
+from hashlib import sha256
 import io
 import os
 from pathlib import Path
@@ -52,7 +53,7 @@ class ScannerTests(unittest.TestCase):
             self.assertNotIn(host, output.getvalue(), "hostname leaked")
             self.assertNotIn("synthetic-pass", output.getvalue(), "fixture leaked")
 
-class HistoryTests(unittest.TestCase):
+class ScannerRepository(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -81,6 +82,9 @@ class HistoryTests(unittest.TestCase):
         self.assertNotIn("synthetic-pass", output, "fixture leaked")
         self.assertNotIn("fixture.example.test", output, "hostname leaked")
         return result.returncode, output
+
+
+class HistoryTests(ScannerRepository):
     def test_clean_repository(self):
         code, output = self.scan()
         self.assertEqual(code, 0)
@@ -115,6 +119,90 @@ class HistoryTests(unittest.TestCase):
         code, output = self.scan(dest)
         self.assertNotEqual(code, 0)
         self.assertIn("Full reachable history required", output)
+
+class ReviewedHistoryTests(ScannerRepository):
+    # Use two approved synthetic blobs in a disposable repository. Python CI
+    # can run these tests even when the project checkout is shallow.
+    def setUp(self):
+        super().setUp()
+        self.dispositions = {}
+        for content in (b"first\n" + fixture_url(), b"second\n" + fixture_url()):
+            self.file.write_bytes(content)
+            self.commit()
+            blob = self.git("rev-parse", "HEAD:fixture.txt").stdout.decode().strip()
+            commit = self.git("rev-parse", "HEAD").stdout.decode().strip()
+            self.dispositions[blob] = (sha256(content).hexdigest(), commit, "fixture.txt", 2)
+        self.file.write_bytes(b"clean")
+        self.commit()
+
+    def reviewed_scan(self):
+        program = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from scripts import scan_secrets; from ast import literal_eval; "
+            "scan_secrets.REVIEWED_HISTORY = literal_eval(sys.argv[2]); "
+            "sys.exit(scan_secrets.main(apply_reviewed_history=True))"
+        )
+        result = subprocess.run([sys.executable, "-B", "-c", program, str(ROOT), repr(self.dispositions)],
+                                cwd=self.repo, env=self.env, capture_output=True, text=True, timeout=30)
+        output = result.stdout + result.stderr
+        self.assertNotIn("synthetic-pass", output)
+        self.assertNotIn("fixture.example.test", output)
+        return result.returncode, output
+
+    def test_only_reviewed_history_passes(self):
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 0, output)
+        self.assertIn("'credential_url': 2", output)
+        for blob in self.dispositions:
+            self.assertIn("Credential URL candidate: historical blob=" + blob, output)
+            self.assertIn("Reviewed historical credential URL: " + blob, output)
+        self.assertEqual(self.scan()[0], 1)
+
+    def test_tracked_copy_of_reviewed_blob_blocks(self):
+        self.file.write_bytes(b"first\n" + fixture_url())
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 1, output)
+        self.assertIn("tracked path sha256=", output)
+
+    def test_unreviewed_historical_url_blocks(self):
+        self.git("switch", "-qc", "extra-history")
+        self.file.write_bytes(b"first\n" + fixture_url() + b"\ncopy")
+        self.commit()
+        self.file.write_bytes(fixture_url().replace(b"synthetic-pass", b"different-password"))
+        self.commit()
+        self.git("switch", "-q", "-")
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 1, output)
+        self.assertIn("'credential_url': 4", output)
+        self.assertNotIn("different-password", output)
+
+    def test_exact_blob_at_new_historical_path_blocks(self):
+        copy = self.repo / "copied.txt"
+        copy.write_bytes(b"first\n" + fixture_url())
+        self.git("add", "copied.txt")
+        self.commit()
+        self.git("rm", "copied.txt")
+        self.commit()
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 1, output)
+        self.assertIn("Historical disposition did not match:", output)
+
+    def test_new_token_blocks(self):
+        token = b"gh" + b"p_" + b"Z" * 36
+        self.file.write_bytes(token)
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 1, output)
+        self.assertIn("'github_token': 1", output)
+        self.assertNotIn(token.decode(), output)
+
+    def test_disposition_mismatch_blocks(self):
+        blob = next(iter(self.dispositions))
+        digest, commit, path, line = self.dispositions[blob]
+        self.dispositions[blob] = ("0" * len(digest), commit, path, line)
+        code, output = self.reviewed_scan()
+        self.assertEqual(code, 1, output)
+        self.assertIn("Historical disposition did not match: " + blob, output)
+
 
 class ContainerSelectorTests(unittest.TestCase):
     def setUp(self):
