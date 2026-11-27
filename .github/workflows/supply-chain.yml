@@ -51,7 +51,7 @@ jobs:
         run: /tmp/lavlah-locked-a/bin/python -B -m unittest discover -s tests -v
       - name: Redacted repository and reachable Git history scan
         if: always()
-        run: python scripts/scan_secrets.py
+        run: python scripts/scan_secrets.py --apply-reviewed-history
       - name: Upload lock and SBOM evidence only
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

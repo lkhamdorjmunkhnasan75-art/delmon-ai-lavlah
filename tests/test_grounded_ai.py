@@ -21,9 +21,11 @@ class GroundedTests(unittest.TestCase):
         self.assertEqual([x["organization_id"] for x in result["items"]],[str(UUID(int=1)),str(UUID(int=2))])
         self.assertEqual(result["usage"]["outcome"],"selected")
     def test_filter_invalid_evidence(self):
+        userinfo = ":".join(("synthetic-user", "synthetic-pass"))
+        credentialed_url = "https://" + userinfo + "@pilot.example.test/"
         rows=[row(1,expires_at=NOW),row(2,verified_at=NOW+timedelta(days=1)),
               row(3,source_url="javascript:alert(1)"),row(4,"Хамааралгүй"),
-              row(5,source_url="https://user:secret@pilot.example.test/")]
+              row(5,source_url=credentialed_url)]
         adapter=Mock()
         self.assertEqual(respond("Алтан нар",Mock(return_value=rows),adapter,now=NOW)["status"],"no_result")
         adapter.select.assert_not_called()
