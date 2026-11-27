@@ -296,3 +296,167 @@ class IntegrityDB(unittest.TestCase):
                                                   'EXECUTE')
                 """, (role, role))
                 self.assertEqual(rows, [(False, False)])
+
+    def _raw_review(self, conn, candidate, approve=True):
+        return conn.execute(
+            "SELECT lavlah.atomic_review(%s,%s,%s,'synthetic transaction check')",
+            (candidate, self.reviewer, approve),
+        ).fetchone()[0]
+
+    def _wait_for_blocker(self, waiter, holder):
+        from time import monotonic, sleep
+
+        deadline = monotonic() + 4
+        while monotonic() < deadline:
+            if self.sql("SELECT %s = ANY(pg_blocking_pids(%s))", (holder, waiter))[0][0]:
+                return
+            sleep(0.025)
+        self.fail(f"PostgreSQL backend {waiter} did not wait for {holder}")
+
+    def _assert_no_review_writes(self, candidate):
+        self.assertEqual(self.sql("""
+            SELECT
+                EXISTS(SELECT 1 FROM lavlah.ingestion_reviews WHERE candidate_id=%s),
+                EXISTS(SELECT 1 FROM lavlah.publication_audit WHERE candidate_id=%s),
+                EXISTS(SELECT 1 FROM lavlah.public_listings WHERE organization_id=%s),
+                EXISTS(SELECT 1 FROM lavlah.sources WHERE organization_id=%s AND id<>%s)
+        """, (candidate, candidate, self.org, self.org, identifier(202))), [(False, False, False, False)])
+
+    def test_binding_revocation_commits_before_waiting_review(self):
+        candidate = self.submit("admin revokes first")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with psycopg.connect(self.dsn) as admin, psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+                admin.execute("DELETE FROM lavlah.reviewer_login_bindings WHERE user_id=%s", (self.reviewer,))
+                reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                reviewer.execute("SET LOCAL statement_timeout='6s'")
+                future = pool.submit(self._raw_review, reviewer, candidate)
+                self._wait_for_blocker(reviewer.info.backend_pid, admin.info.backend_pid)
+                admin.commit()
+                with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "identity binding"):
+                    future.result(timeout=7)
+                reviewer.rollback()
+        self._assert_no_review_writes(candidate)
+
+    def test_binding_revocation_waits_for_review_commit(self):
+        candidate = self.submit("review locks first")
+        next_candidate = self.submit("review after revocation")
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with psycopg.connect(self.dsn) as admin, psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+                reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                self.assertIsNotNone(self._raw_review(reviewer, candidate))
+                admin.execute("SET LOCAL statement_timeout='6s'")
+                future = pool.submit(
+                    admin.execute, "DELETE FROM lavlah.reviewer_login_bindings WHERE user_id=%s", (self.reviewer,)
+                )
+                self._wait_for_blocker(admin.info.backend_pid, reviewer.info.backend_pid)
+                reviewer.commit()
+                self.assertEqual(future.result(timeout=7).rowcount, 1)
+                admin.commit()
+        self.assertEqual(
+            self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s", (candidate,)),
+            [("approved",)],
+        )
+        with self.assertRaisesRegex(IngestionError, "Atomic review denied"):
+            self.review(next_candidate)
+
+    def test_stale_transaction_snapshots_fail_closed(self):
+        for isolation in ("REPEATABLE READ", "SERIALIZABLE"):
+            with self.subTest(isolation=isolation):
+                candidate = self.submit(f"old snapshot {isolation}")
+                with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+                    reviewer.execute(f"SET TRANSACTION ISOLATION LEVEL {isolation}")
+                    reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                    reviewer.execute("SELECT count(*) FROM lavlah.ingestion_candidates").fetchone()
+                    self.sql("DELETE FROM lavlah.reviewer_login_bindings WHERE user_id=%s", (self.reviewer,))
+                    with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "READ COMMITTED"):
+                        self._raw_review(reviewer, candidate)
+                    reviewer.rollback()
+                self._assert_no_review_writes(candidate)
+                self.sql("""INSERT INTO lavlah.reviewer_login_bindings(login_oid,login_name,user_id)
+                            SELECT oid,rolname,%s FROM pg_roles WHERE rolname='lavlah_review_test'""",
+                         (self.reviewer,))
+
+    def test_permission_expiry_at_commit_rolls_back_atomic_review(self):
+        candidate = self.submit("permission expires after review")
+        [(expiry,)] = self.sql("""
+            UPDATE lavlah.ingestion_permissions SET valid_until=clock_timestamp()+interval '3 seconds'
+            WHERE id=%s RETURNING valid_until
+        """, (self.pid,))
+        with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+            reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+            self.assertIsNone(self._raw_review(reviewer, candidate, approve=False))
+            reviewer.execute("SELECT pg_sleep_until(%s)", (expiry,))
+            with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "authorization no longer valid"):
+                reviewer.commit()
+        self._assert_no_review_writes(candidate)
+
+    def test_source_expiry_at_commit_rolls_back_publication(self):
+        candidate = self.submit("source expires after review")
+        [(expiry,)] = self.sql("""
+            UPDATE lavlah.ingestion_candidates
+            SET observed_at=clock_timestamp()-interval '1 day'+interval '3 seconds'
+            WHERE id=%s RETURNING observed_at+interval '1 day'
+        """, (candidate,))
+        with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+            reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+            self.assertIsNotNone(self._raw_review(reviewer, candidate))
+            reviewer.execute("SELECT pg_sleep_until(%s)", (expiry,))
+            with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "source expired"):
+                reviewer.commit()
+        self._assert_no_review_writes(candidate)
+
+    def test_role_membership_revocation_before_commit(self):
+        candidate = self.submit("database role revoked")
+        with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+            reviewer.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+            self.assertIsNotNone(self._raw_review(reviewer, candidate))
+            self.sql("REVOKE lavlah_ingestion_reviewer FROM lavlah_review_test")
+            try:
+                with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "authorization no longer valid"):
+                    reviewer.commit()
+            finally:
+                self.sql("GRANT lavlah_ingestion_reviewer TO lavlah_review_test")
+        self._assert_no_review_writes(candidate)
+
+    def test_older_review_waiting_on_organization_sees_new_publication(self):
+        older, newer = self.submit("older observation"), self.submit("newer observation")
+        other_permission = uuid4()
+        self.sql("""
+            INSERT INTO lavlah.ingestion_permissions
+                (id, organization_id, source_url, evidence, granted_by, valid_until, freshness_days)
+            SELECT %s, organization_id, source_url, evidence, granted_by, valid_until, freshness_days
+            FROM lavlah.ingestion_permissions WHERE id=%s
+        """, (other_permission, self.pid))
+        self.addCleanup(self.sql, "DELETE FROM lavlah.ingestion_permissions WHERE id=%s", (other_permission,))
+        self.sql("INSERT INTO lavlah.ingestion_actor_grants VALUES (%s,%s,'review')",
+                 (other_permission, self.reviewer))
+        self.addCleanup(self.sql, "DELETE FROM lavlah.ingestion_actor_grants WHERE permission_id=%s",
+                        (other_permission,))
+        self.sql("""
+            UPDATE lavlah.ingestion_candidates
+            SET permission_id=%s, observed_at=clock_timestamp()-interval '1 hour' WHERE id=%s
+        """, (other_permission, older))
+        self.addCleanup(self.sql, "UPDATE lavlah.ingestion_candidates SET permission_id=%s WHERE id=%s",
+                        (self.pid, older))
+        self.addCleanup(self.sql, "DELETE FROM lavlah.publication_audit WHERE candidate_id=%s", (older,))
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with (
+                psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as first,
+                psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as second,
+            ):
+                first.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                second.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
+                second.execute("SET LOCAL statement_timeout='6s'")
+                self.assertIsNotNone(self._raw_review(first, newer))
+                future = pool.submit(self._raw_review, second, older)
+                self._wait_for_blocker(second.info.backend_pid, first.info.backend_pid)
+                first.commit()
+                with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "Stale or invalid observation"):
+                    future.result(timeout=7)
+                second.rollback()
+
+        self.assertEqual(
+            self.sql("SELECT name FROM lavlah.public_listings WHERE organization_id=%s", (self.org,)),
+            [("newer observation",)],
+        )

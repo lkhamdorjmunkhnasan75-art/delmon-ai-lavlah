@@ -108,9 +108,6 @@ class Ingestion:
                     raise IngestionError("Independent reviewer required")
                 grant=permission(c,row["permission_id"])
                 require_actor(c,row["permission_id"],reviewer,"review")
-                c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,12))",(str(grant["organization_id"]),))
-                if c.execute("SELECT 1 FROM lavlah.ingestion_reviews WHERE candidate_id=%s",(candidate_id,)).fetchone():
-                    raise IngestionError("Already reviewed")
                 if os.getenv("LAVLAH_INGESTION_STRICT")=="1":
                     try:
                         source=c.execute("SELECT lavlah.atomic_review(%s,%s,%s,%s) AS source_id",
@@ -119,6 +116,9 @@ class Ingestion:
                         raise IngestionError("Atomic review denied") from None
                     permission(c,row["permission_id"])
                     return {"decision":"approved" if approve else "rejected","source_id":str(source) if source else None}
+                c.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,12))",(str(grant["organization_id"]),))
+                if c.execute("SELECT 1 FROM lavlah.ingestion_reviews WHERE candidate_id=%s",(candidate_id,)).fetchone():
+                    raise IngestionError("Already reviewed")
                 source=None
                 if approve:
                     previous=c.execute("SELECT s.observed_at FROM lavlah.public_listings p JOIN lavlah.sources s ON s.id=p.source_id WHERE p.organization_id=%s",(grant["organization_id"],)).fetchone()
