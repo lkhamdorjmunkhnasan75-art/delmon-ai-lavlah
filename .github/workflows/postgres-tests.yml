@@ -237,6 +237,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/018_reviewer_identity.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/018_reviewer_identity.down.sql
           psql -X -v ON_ERROR_STOP=1 -f db/migrations/018_reviewer_identity.sql
+      - name: Review transaction guard migration and rollback
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/019_review_transaction_guard.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/019_review_transaction_guard.down.sql
+          psql -X -v ON_ERROR_STOP=1 -f db/migrations/019_review_transaction_guard.sql
       - name: Backup and restore disposable database
         run: |
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery_seed.sql
