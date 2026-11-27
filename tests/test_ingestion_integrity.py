@@ -51,6 +51,9 @@ class IntegrityDB(unittest.TestCase):
         flag=patch.dict(os.environ,{"LAVLAH_ENV":"pilot","LAVLAH_INGESTION_STRICT":"1","LAVLAH_SYNTHETIC_KEY":KEY.hex()})
         flag.start()
         self.addCleanup(flag.stop)
+        self.sql("""INSERT INTO lavlah.reviewer_login_bindings(login_oid,login_name,user_id)
+                    SELECT oid,rolname,%s FROM pg_roles WHERE rolname='lavlah_review_test'""",
+                 (self.reviewer,))
         self.s=AuthenticatedIngestion()
     def sql(self,q,args=()):
         with psycopg.connect(self.dsn) as c:
@@ -255,3 +258,41 @@ class IntegrityDB(unittest.TestCase):
         self.assertTrue(definer)
         self.assertIn("search_path=pg_catalog",config)
         self.assertFalse(any((login,superuser,bypass,createrole,createdb,member,request_exec,create,public_exec)))
+
+    def test_bound_login_requires_matching_authenticated_reviewer(self):
+        candidate = self.submit("reviewer binding")
+        self.sql("UPDATE lavlah.reviewer_login_bindings SET user_id=%s WHERE user_id=%s",
+                 (self.actor, self.reviewer))
+        with self.assertRaisesRegex(IngestionError, "Atomic review denied"):
+            self.review(candidate)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.publication_audit WHERE candidate_id=%s",
+                                  (candidate,)), [])
+        self.sql("UPDATE lavlah.reviewer_login_bindings SET user_id=%s WHERE user_id=%s",
+                 (self.reviewer, self.actor))
+        source = self.review(candidate)["source_id"]
+        self.assertEqual(self.sql("SELECT reviewer_id FROM lavlah.ingestion_reviews WHERE candidate_id=%s",
+                                  (candidate,)), [(self.reviewer,)])
+        self.assertEqual(self.sql("SELECT reviewer_id FROM lavlah.publication_audit WHERE candidate_id=%s",
+                                  (candidate,)), [(self.reviewer,)])
+        self.assertEqual(self.sql("SELECT verified_by FROM lavlah.sources WHERE id=%s",
+                                  (source,)), [(self.reviewer,)])
+
+    def test_missing_binding_denies_authorized_reviewer(self):
+        candidate = self.submit("unbound reviewer")
+        self.sql("DELETE FROM lavlah.reviewer_login_bindings WHERE user_id=%s", (self.reviewer,))
+        with self.assertRaisesRegex(IngestionError, "Atomic review denied"):
+            self.review(candidate)
+        self.assertEqual(self.sql("SELECT decision FROM lavlah.ingestion_reviews WHERE candidate_id=%s",
+                                  (candidate,)), [])
+
+    def test_binding_and_internal_review_privileges(self):
+        for role in ("lavlah_ingestion_reviewer", "lavlah_review_test", "lavlah_request",
+                     "lavlah_ingestion", "lavlah_identity"):
+            with self.subTest(role=role):
+                rows = self.sql("""
+                    SELECT has_table_privilege(%s,'lavlah.reviewer_login_bindings',
+                                               'SELECT, INSERT, UPDATE, DELETE, TRUNCATE'),
+                           has_function_privilege(%s,'lavlah.atomic_review_internal(uuid,uuid,boolean,text)',
+                                                  'EXECUTE')
+                """, (role, role))
+                self.assertEqual(rows, [(False, False)])

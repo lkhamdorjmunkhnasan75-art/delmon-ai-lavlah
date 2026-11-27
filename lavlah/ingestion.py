@@ -63,9 +63,10 @@ def require_actor(c,permission_id,actor,capability):
         raise IngestionError("Actor not authorized")
 
 class Ingestion:
-    def __init__(self,dsn,review_dsn=None):
+    def __init__(self,dsn,review_dsn=None,*,review_login="lavlah_review_test"):
         self.dsn=dsn
         self.review_dsn=review_dsn
+        self.review_login=review_login
 
     def submit(self,permission_id,actor,records):
         permission_id,actor=UUID(str(permission_id)),UUID(str(actor))
@@ -99,7 +100,7 @@ class Ingestion:
         if not evidence: raise IngestionError("Review evidence required")
         with closing(psycopg.connect(self.review_dsn,row_factory=dict_row,connect_timeout=5)) as c:
             with c.transaction():
-                strict_connection(c,"lavlah_review_test")
+                strict_connection(c,self.review_login)
                 c.execute("SET LOCAL ROLE lavlah_ingestion_reviewer")
                 c.execute("SET LOCAL statement_timeout='5s'")
                 row=c.execute("SELECT * FROM lavlah.ingestion_candidates WHERE id=%s",(candidate_id,)).fetchone()
