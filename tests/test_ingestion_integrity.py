@@ -1,6 +1,7 @@
 import os
 import unittest
 import socket
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -35,6 +36,35 @@ class IntegrityUnit(unittest.TestCase):
     def test_explicit_strict_mode(self):
         with patch.dict(os.environ,{"LAVLAH_INGESTION_STRICT":"0"}):
             with self.assertRaises(IngestionError):AuthenticatedIngestion()
+
+    def test_reviewer_configuration_rejects_collector_login(self):
+        collector_dsn = "postgresql://lavlah_ingest_test@127.0.0.1/lavlah_pilot_test"
+        with patch.dict(os.environ, {
+            "LAVLAH_ENV": "pilot",
+            "LAVLAH_PILOT_ONLY": "1",
+            "LAVLAH_INGESTION_STRICT": "1",
+            "LAVLAH_INGESTION_DSN": collector_dsn,
+            "LAVLAH_REVIEW_DSN": collector_dsn,
+        }, clear=True):
+            with self.assertRaisesRegex(ValueError, "Pilot DSN mismatch"):
+                AuthenticatedIngestion()
+
+    def test_expired_token_rejected_before_reviewer_connection(self):
+        expires_at = int(time.time())
+        expired_token = token(sub="synthetic-pilot-2", iat=expires_at - 60, exp=expires_at)
+        with patch.dict(os.environ, {
+            "LAVLAH_ENV": "pilot",
+            "LAVLAH_PILOT_ONLY": "1",
+            "LAVLAH_INGESTION_STRICT": "1",
+            "LAVLAH_SYNTHETIC_KEY": KEY.hex(),
+            "LAVLAH_INGESTION_DSN": "postgresql://lavlah_ingest_test@127.0.0.1/lavlah_pilot_test",
+            "LAVLAH_REVIEW_DSN": "postgresql://lavlah_review_test@127.0.0.1/lavlah_pilot_test",
+        }, clear=True), patch("psycopg.connect") as connect:
+            with self.assertRaisesRegex(ValueError, "Invalid synthetic identity"):
+                AuthenticatedIngestion().review(
+                    expired_token, uuid4(), approve=True, evidence="synthetic"
+                )
+            connect.assert_not_called()
 
 @unittest.skipUnless(os.getenv("LAVLAH_PILOT_INTEGRATION")=="1","Disposable pilot DB required")
 class IntegrityDB(unittest.TestCase):
@@ -296,6 +326,25 @@ class IntegrityDB(unittest.TestCase):
                                                   'EXECUTE')
                 """, (role, role))
                 self.assertEqual(rows, [(False, False)])
+
+    def test_reviewer_database_disables_prepared_transactions(self):
+        with psycopg.connect(os.environ["LAVLAH_REVIEW_DSN"]) as reviewer:
+            self.assertEqual(reviewer.execute("SHOW max_prepared_transactions").fetchone(), ("0",))
+            with self.assertRaises(psycopg.errors.ObjectNotInPrerequisiteState):
+                reviewer.execute("PREPARE TRANSACTION 'lavlah_ci_prepared_disabled'")
+            reviewer.rollback()
+
+    def test_reviewer_group_and_publication_owner_are_nologin(self):
+        rows = self.sql("""
+            SELECT rolname, rolcanlogin
+            FROM pg_roles
+            WHERE rolname IN ('lavlah_ingestion_reviewer', 'lavlah_publication_owner')
+            ORDER BY rolname
+        """)
+        self.assertEqual(rows, [
+            ("lavlah_ingestion_reviewer", False),
+            ("lavlah_publication_owner", False),
+        ])
 
     def _raw_review(self, conn, candidate, approve=True):
         return conn.execute(
